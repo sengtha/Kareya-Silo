@@ -752,3 +752,50 @@ CREATE POLICY "Update signature requests" ON public.signature_requests FOR UPDAT
 CREATE POLICY "View signatures" ON public.signatures FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Record signatures" ON public.signatures FOR INSERT TO authenticated WITH CHECK (is_employee());
 CREATE POLICY "View esign config" ON public.esign_config FOR SELECT TO authenticated USING (is_employee());
+
+-- ---- gym / fitness ------------------------------------------------------
+ALTER TABLE public.gym_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gym_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gym_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gym_checkins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gym_classes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View gym plans" ON public.gym_plans FOR SELECT TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gym plans" ON public.gym_plans FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager'])) WITH CHECK (has_any_role(ARRAY['Manager']));
+CREATE POLICY "View gym members" ON public.gym_members FOR SELECT TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gym members" ON public.gym_members FOR ALL TO authenticated USING (has_any_role(ARRAY['Reception','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Reception','Cashier','Manager']));
+CREATE POLICY "View gym memberships" ON public.gym_memberships FOR SELECT TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gym memberships" ON public.gym_memberships FOR ALL TO authenticated USING (has_any_role(ARRAY['Reception','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Reception','Cashier','Manager']));
+CREATE POLICY "View gym checkins" ON public.gym_checkins FOR SELECT TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Record gym checkins" ON public.gym_checkins FOR ALL TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Trainer','Reception','Cashier','Manager']));
+CREATE POLICY "View gym classes" ON public.gym_classes FOR SELECT TO authenticated USING (has_any_role(ARRAY['Trainer','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gym classes" ON public.gym_classes FOR ALL TO authenticated USING (has_any_role(ARRAY['Trainer','Manager'])) WITH CHECK (has_any_role(ARRAY['Trainer','Manager']));
+
+-- ---- event management ---------------------------------------------------
+ALTER TABLE public.event_vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.event_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.event_services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.event_payments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View event vendors" ON public.event_vendors FOR SELECT TO authenticated USING (has_any_role(ARRAY['Event Planner','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage event vendors" ON public.event_vendors FOR ALL TO authenticated USING (has_any_role(ARRAY['Event Planner','Manager'])) WITH CHECK (has_any_role(ARRAY['Event Planner','Manager']));
+CREATE POLICY "View event bookings" ON public.event_bookings FOR SELECT TO authenticated USING (has_any_role(ARRAY['Event Planner','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage event bookings" ON public.event_bookings FOR ALL TO authenticated USING (has_any_role(ARRAY['Event Planner','Manager'])) WITH CHECK (has_any_role(ARRAY['Event Planner','Manager']));
+CREATE POLICY "View event services" ON public.event_services FOR SELECT TO authenticated USING (has_any_role(ARRAY['Event Planner','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage event services" ON public.event_services FOR ALL TO authenticated USING (has_any_role(ARRAY['Event Planner','Manager'])) WITH CHECK (has_any_role(ARRAY['Event Planner','Manager']));
+CREATE POLICY "View event payments" ON public.event_payments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Event Planner','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage event payments" ON public.event_payments FOR ALL TO authenticated USING (has_any_role(ARRAY['Event Planner','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Event Planner','Cashier','Manager']));
+
+-- ---- vehicle rental -------------------------------------------------------
+ALTER TABLE public.vehicle_rentals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View vehicle rentals" ON public.vehicle_rentals FOR SELECT TO authenticated USING (has_any_role(ARRAY['Rental Agent','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage vehicle rentals" ON public.vehicle_rentals FOR ALL TO authenticated USING (has_any_role(ARRAY['Rental Agent','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Rental Agent','Cashier','Manager']));
+
+-- ---- travel & tour --------------------------------------------------------
+ALTER TABLE public.tour_packages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tour_departures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tour_bookings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View tour packages" ON public.tour_packages FOR SELECT TO authenticated USING (has_any_role(ARRAY['Travel Agent','Guide','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage tour packages" ON public.tour_packages FOR ALL TO authenticated USING (has_any_role(ARRAY['Travel Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Travel Agent','Manager']));
+CREATE POLICY "View tour departures" ON public.tour_departures FOR SELECT TO authenticated USING (has_any_role(ARRAY['Travel Agent','Guide','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage tour departures" ON public.tour_departures FOR ALL TO authenticated USING (has_any_role(ARRAY['Travel Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Travel Agent','Manager']));
+CREATE POLICY "View tour bookings" ON public.tour_bookings FOR SELECT TO authenticated USING (has_any_role(ARRAY['Travel Agent','Guide','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage tour bookings" ON public.tour_bookings FOR ALL TO authenticated USING (has_any_role(ARRAY['Travel Agent','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Travel Agent','Cashier','Manager']));

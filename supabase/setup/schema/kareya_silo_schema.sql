@@ -3579,3 +3579,235 @@ $function$;
 REVOKE ALL ON FUNCTION public.esign_get_key() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.esign_get_key() FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.esign_get_key() TO service_role;
+
+-- =====================================================================
+-- GYM / FITNESS (plans, members, memberships, check-ins, classes)
+-- A membership is one purchased plan instance with its own start/end and
+-- optional session allowance; check-ins consume sessions when limited.
+-- =====================================================================
+CREATE TABLE public.gym_plans (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Monthly Unlimited'
+  duration_days integer DEFAULT 30,
+  price numeric DEFAULT 0,
+  sessions_limit integer,                    -- null = unlimited visits
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gym_plans_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.gym_members (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  phone text,
+  email text,
+  emergency_contact text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gym_members_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.gym_memberships (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  member_id uuid NOT NULL,
+  plan_id uuid,
+  start_date date DEFAULT CURRENT_DATE,
+  end_date date,
+  price numeric DEFAULT 0,                   -- what was actually charged
+  sessions_limit integer,                    -- copied from plan at sale time
+  sessions_used integer DEFAULT 0,
+  status text DEFAULT 'active'::text,        -- active | expired | cancelled
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gym_memberships_pkey PRIMARY KEY (id),
+  CONSTRAINT gym_memberships_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.gym_members(id) ON DELETE CASCADE,
+  CONSTRAINT gym_memberships_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.gym_plans(id) ON DELETE SET NULL,
+  CONSTRAINT gym_memberships_status_check CHECK (status = ANY (ARRAY['active','expired','cancelled']))
+);
+
+CREATE TABLE public.gym_checkins (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  member_id uuid NOT NULL,
+  membership_id uuid,
+  checked_in_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gym_checkins_pkey PRIMARY KEY (id),
+  CONSTRAINT gym_checkins_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.gym_members(id) ON DELETE CASCADE,
+  CONSTRAINT gym_checkins_membership_id_fkey FOREIGN KEY (membership_id) REFERENCES public.gym_memberships(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.gym_classes (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Morning Yoga'
+  trainer_id uuid,
+  weekday integer DEFAULT 1,                 -- 0=Sun .. 6=Sat
+  start_time time,
+  duration_min integer DEFAULT 60,
+  capacity integer DEFAULT 20,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gym_classes_pkey PRIMARY KEY (id),
+  CONSTRAINT gym_classes_trainer_id_fkey FOREIGN KEY (trainer_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT gym_classes_weekday_check CHECK (weekday BETWEEN 0 AND 6)
+);
+CREATE INDEX IF NOT EXISTS idx_gym_memberships_member_id ON public.gym_memberships (member_id);
+CREATE INDEX IF NOT EXISTS idx_gym_checkins_member_id ON public.gym_checkins (member_id);
+CREATE INDEX IF NOT EXISTS idx_gym_checkins_time ON public.gym_checkins (checked_in_at);
+
+-- =====================================================================
+-- EVENT MANAGEMENT (weddings/parties/corporate — bookings, services,
+-- vendors, staged payments). The booking total is the sum of its service
+-- lines' prices; profitability = price − vendor cost per line.
+-- =====================================================================
+CREATE TABLE public.event_vendors (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  service_type text,                         -- catering | decoration | photo | sound | venue | other
+  phone text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT event_vendors_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.event_bookings (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  booking_number text,
+  event_name text NOT NULL,                  -- e.g. 'Dara & Sreyla Wedding'
+  event_type text DEFAULT 'wedding'::text,   -- wedding | party | corporate | other
+  customer_name text,
+  customer_phone text,
+  venue text,
+  event_date date,
+  guests integer DEFAULT 0,
+  status text DEFAULT 'inquiry'::text,       -- inquiry | confirmed | in_progress | completed | cancelled
+  planner_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT event_bookings_pkey PRIMARY KEY (id),
+  CONSTRAINT event_bookings_planner_id_fkey FOREIGN KEY (planner_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT event_bookings_type_check CHECK (event_type = ANY (ARRAY['wedding','party','corporate','other'])),
+  CONSTRAINT event_bookings_status_check CHECK (status = ANY (ARRAY['inquiry','confirmed','in_progress','completed','cancelled']))
+);
+
+CREATE TABLE public.event_services (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  booking_id uuid NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Catering — 40 tables'
+  vendor_id uuid,
+  cost numeric DEFAULT 0,                    -- what the vendor charges us
+  price numeric DEFAULT 0,                   -- what we charge the customer
+  status text DEFAULT 'planned'::text,       -- planned | booked | done
+  CONSTRAINT event_services_pkey PRIMARY KEY (id),
+  CONSTRAINT event_services_booking_id_fkey FOREIGN KEY (booking_id) REFERENCES public.event_bookings(id) ON DELETE CASCADE,
+  CONSTRAINT event_services_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES public.event_vendors(id) ON DELETE SET NULL,
+  CONSTRAINT event_services_status_check CHECK (status = ANY (ARRAY['planned','booked','done']))
+);
+
+CREATE TABLE public.event_payments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  booking_id uuid NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  amount numeric DEFAULT 0,
+  type text DEFAULT 'deposit'::text,         -- deposit | installment | final
+  received_by uuid,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT event_payments_pkey PRIMARY KEY (id),
+  CONSTRAINT event_payments_booking_id_fkey FOREIGN KEY (booking_id) REFERENCES public.event_bookings(id) ON DELETE CASCADE,
+  CONSTRAINT event_payments_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT event_payments_type_check CHECK (type = ANY (ARRAY['deposit','installment','final']))
+);
+CREATE INDEX IF NOT EXISTS idx_event_services_booking_id ON public.event_services (booking_id);
+CREATE INDEX IF NOT EXISTS idx_event_payments_booking_id ON public.event_payments (booking_id);
+CREATE INDEX IF NOT EXISTS idx_event_bookings_date ON public.event_bookings (event_date);
+
+-- =====================================================================
+-- VEHICLE RENTAL (moto/car rental contracts over the fleet registry)
+-- Reuses public.vehicles as the asset registry; a rental is a contract on
+-- one vehicle: deposit held, daily rate, out/in checklists, return charge.
+-- =====================================================================
+CREATE TABLE public.vehicle_rentals (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  rental_number text,
+  vehicle_id uuid,
+  customer_name text NOT NULL,
+  customer_phone text,
+  id_document text,                          -- e.g. 'Passport N1234567 (held)'
+  deposit_amount numeric DEFAULT 0,
+  deposit_type text DEFAULT 'cash'::text,    -- cash | passport | id_card | other
+  daily_rate numeric DEFAULT 0,
+  start_date date DEFAULT CURRENT_DATE,
+  due_date date,
+  returned_at timestamp with time zone,
+  odometer_out numeric,
+  odometer_in numeric,
+  fuel_out text,                             -- e.g. 'Full', '3/4'
+  checklist_out text,                        -- condition notes at handover
+  damage_notes text,                         -- condition notes at return
+  total_charged numeric DEFAULT 0,           -- final charge computed at return
+  status text DEFAULT 'active'::text,        -- reserved | active | returned | cancelled
+  agent_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vehicle_rentals_pkey PRIMARY KEY (id),
+  CONSTRAINT vehicle_rentals_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE SET NULL,
+  CONSTRAINT vehicle_rentals_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT vehicle_rentals_deposit_check CHECK (deposit_type = ANY (ARRAY['cash','passport','id_card','other'])),
+  CONSTRAINT vehicle_rentals_status_check CHECK (status = ANY (ARRAY['reserved','active','returned','cancelled']))
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_vehicle_id ON public.vehicle_rentals (vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_status ON public.vehicle_rentals (status);
+
+-- =====================================================================
+-- TRAVEL & TOUR AGENCY (packages, departures, bookings)
+-- A package is the product; a departure is one dated run of it with a
+-- capacity and a guide; bookings hold pax against a departure.
+-- =====================================================================
+CREATE TABLE public.tour_packages (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Angkor 3D2N'
+  description text,
+  days integer DEFAULT 1,
+  nights integer DEFAULT 0,
+  destinations text,                         -- e.g. 'Siem Reap, Tonle Sap'
+  base_price numeric DEFAULT 0,              -- selling price per pax
+  cost_estimate numeric DEFAULT 0,           -- estimated cost per pax
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tour_packages_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.tour_departures (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  package_id uuid NOT NULL,
+  depart_date date NOT NULL,
+  return_date date,
+  capacity integer DEFAULT 15,
+  price numeric,                             -- per-pax override; null = package base_price
+  guide_id uuid,
+  status text DEFAULT 'scheduled'::text,     -- scheduled | confirmed | departed | completed | cancelled
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tour_departures_pkey PRIMARY KEY (id),
+  CONSTRAINT tour_departures_package_id_fkey FOREIGN KEY (package_id) REFERENCES public.tour_packages(id) ON DELETE CASCADE,
+  CONSTRAINT tour_departures_guide_id_fkey FOREIGN KEY (guide_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT tour_departures_status_check CHECK (status = ANY (ARRAY['scheduled','confirmed','departed','completed','cancelled']))
+);
+
+CREATE TABLE public.tour_bookings (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  booking_number text,
+  departure_id uuid NOT NULL,
+  customer_name text NOT NULL,
+  customer_phone text,
+  pax integer DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  paid_amount numeric DEFAULT 0,
+  status text DEFAULT 'pending'::text,       -- pending | confirmed | paid | cancelled
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tour_bookings_pkey PRIMARY KEY (id),
+  CONSTRAINT tour_bookings_departure_id_fkey FOREIGN KEY (departure_id) REFERENCES public.tour_departures(id) ON DELETE CASCADE,
+  CONSTRAINT tour_bookings_status_check CHECK (status = ANY (ARRAY['pending','confirmed','paid','cancelled']))
+);
+CREATE INDEX IF NOT EXISTS idx_tour_departures_package_id ON public.tour_departures (package_id);
+CREATE INDEX IF NOT EXISTS idx_tour_departures_date ON public.tour_departures (depart_date);
+CREATE INDEX IF NOT EXISTS idx_tour_bookings_departure_id ON public.tour_bookings (departure_id);
