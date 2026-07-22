@@ -1424,3 +1424,28 @@ CREATE TABLE public.stock_transfers (
 
 CREATE INDEX IF NOT EXISTS idx_stock_levels_warehouse_id ON public.stock_levels (warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_stock_transfers_item_id ON public.stock_transfers (item_id);
+
+-- =====================================================================
+-- SHIPMENTS / DELIVERIES (logistics layer over fulfilled orders + fleet)
+-- =====================================================================
+CREATE TABLE public.shipments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  shipment_number text NOT NULL,
+  sales_order_id uuid,
+  vehicle_id uuid,
+  driver_id uuid,
+  status text DEFAULT 'pending'::text,    -- pending | in_transit | delivered | failed
+  ship_date date DEFAULT CURRENT_DATE,
+  delivered_at timestamp with time zone,
+  address text,
+  recipient text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT shipments_pkey PRIMARY KEY (id),
+  CONSTRAINT shipments_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL,
+  CONSTRAINT shipments_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE SET NULL,
+  CONSTRAINT shipments_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT shipments_status_check CHECK (status = ANY (ARRAY['pending','in_transit','delivered','failed']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipments_sales_order_id ON public.shipments (sales_order_id);

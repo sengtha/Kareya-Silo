@@ -339,3 +339,9 @@ CREATE POLICY "View stock levels" ON public.stock_levels FOR SELECT TO authentic
 CREATE POLICY "Manage stock levels" ON public.stock_levels FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View stock transfers" ON public.stock_transfers FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage stock transfers" ON public.stock_transfers FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+
+-- ---- shipments / deliveries -------------------------------------------
+ALTER TABLE public.shipments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View shipments" ON public.shipments FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage shipments" ON public.shipments FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
