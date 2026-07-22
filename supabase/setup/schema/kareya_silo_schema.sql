@@ -3811,3 +3811,285 @@ CREATE TABLE public.tour_bookings (
 CREATE INDEX IF NOT EXISTS idx_tour_departures_package_id ON public.tour_departures (package_id);
 CREATE INDEX IF NOT EXISTS idx_tour_departures_date ON public.tour_departures (depart_date);
 CREATE INDEX IF NOT EXISTS idx_tour_bookings_departure_id ON public.tour_bookings (departure_id);
+
+-- =====================================================================
+-- GOLD / JEWELRY SHOP (rate board, inventory, buy/sell by weight)
+-- Sell price of a piece = weight * sell rate for its karat + labour charge.
+-- Buy-back from a customer = weight * buy rate. Pairs with the Pawn Shop
+-- (forfeited jewellery can be re-sold here).
+-- =====================================================================
+CREATE TABLE public.gold_rates (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  karat text NOT NULL,                       -- '24K' | '22K' | '18K' | 'chi' ...
+  buy_per_gram numeric DEFAULT 0,            -- what we pay to buy gold in
+  sell_per_gram numeric DEFAULT 0,           -- what we charge selling out
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gold_rates_pkey PRIMARY KEY (id),
+  CONSTRAINT gold_rates_karat_key UNIQUE (karat)
+);
+
+CREATE TABLE public.jewelry_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sku text,
+  name text NOT NULL,                        -- e.g. 'Necklace 22K'
+  karat text,
+  weight_grams numeric DEFAULT 0,
+  labor_charge numeric DEFAULT 0,            -- workmanship added on sale
+  stone_charge numeric DEFAULT 0,
+  quantity numeric DEFAULT 1,
+  status text DEFAULT 'in_stock'::text,      -- in_stock | sold
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT jewelry_products_pkey PRIMARY KEY (id),
+  CONSTRAINT jewelry_products_status_check CHECK (status = ANY (ARRAY['in_stock','sold']))
+);
+
+CREATE TABLE public.gold_transactions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  txn_number text,
+  type text DEFAULT 'sell'::text,            -- sell | buyback
+  product_id uuid,                           -- when selling a stock piece
+  customer_name text,
+  customer_phone text,
+  description text,                          -- free-text item (esp. buyback)
+  karat text,
+  weight_grams numeric DEFAULT 0,
+  rate_per_gram numeric DEFAULT 0,           -- rate applied at txn time
+  gold_value numeric DEFAULT 0,             -- weight * rate
+  labor_charge numeric DEFAULT 0,
+  total numeric DEFAULT 0,                    -- sell: gold+labour+stone; buyback: gold
+  date date DEFAULT CURRENT_DATE,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gold_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT gold_transactions_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.jewelry_products(id) ON DELETE SET NULL,
+  CONSTRAINT gold_transactions_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT gold_transactions_type_check CHECK (type = ANY (ARRAY['sell','buyback']))
+);
+CREATE INDEX IF NOT EXISTS idx_gold_transactions_date ON public.gold_transactions (date);
+
+-- =====================================================================
+-- MONEY EXCHANGE (currency rate board + buy/sell transactions)
+-- Rates are quoted against the shop's base currency. A transaction converts
+-- from_amount of from_currency into to_amount of to_currency at rate_applied.
+-- =====================================================================
+CREATE TABLE public.fx_rates (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  currency_code text NOT NULL,               -- e.g. 'USD', 'THB', 'KHR'
+  buy_rate numeric DEFAULT 0,                -- units of base we PAY per 1 unit of currency
+  sell_rate numeric DEFAULT 0,              -- units of base we CHARGE per 1 unit
+  base_code text DEFAULT 'USD'::text,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT fx_rates_pkey PRIMARY KEY (id),
+  CONSTRAINT fx_rates_currency_key UNIQUE (currency_code)
+);
+
+CREATE TABLE public.fx_transactions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  txn_number text,
+  direction text DEFAULT 'buy'::text,        -- buy (customer sells us fx) | sell (customer buys fx)
+  from_currency text,
+  from_amount numeric DEFAULT 0,
+  to_currency text,
+  to_amount numeric DEFAULT 0,
+  rate_applied numeric DEFAULT 0,
+  profit numeric DEFAULT 0,                   -- spread earned in base currency
+  customer_name text,
+  date date DEFAULT CURRENT_DATE,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT fx_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT fx_transactions_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT fx_transactions_direction_check CHECK (direction = ANY (ARRAY['buy','sell']))
+);
+CREATE INDEX IF NOT EXISTS idx_fx_transactions_date ON public.fx_transactions (date);
+
+-- =====================================================================
+-- WATER DELIVERY (purified-water refill/delivery — very common in Cambodia)
+-- Customers hold a balance of empty containers; orders deliver full ones and
+-- collect empties. container_balance = empties the customer currently owes.
+-- =====================================================================
+CREATE TABLE public.water_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. '20L Gallon'
+  price numeric DEFAULT 0,
+  deposit numeric DEFAULT 0,                 -- container deposit (refundable)
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT water_products_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.water_customers (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  phone text,
+  address text,
+  container_balance integer DEFAULT 0,       -- empties held by the customer
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT water_customers_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.water_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_number text,
+  customer_id uuid,
+  product_id uuid,
+  quantity integer DEFAULT 1,                -- full containers delivered
+  empties_collected integer DEFAULT 0,
+  unit_price numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  status text DEFAULT 'pending'::text,       -- pending | delivered | cancelled
+  scheduled_date date DEFAULT CURRENT_DATE,
+  delivered_at timestamp with time zone,
+  driver_id uuid,
+  paid boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT water_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT water_orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.water_customers(id) ON DELETE SET NULL,
+  CONSTRAINT water_orders_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.water_products(id) ON DELETE SET NULL,
+  CONSTRAINT water_orders_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT water_orders_status_check CHECK (status = ANY (ARRAY['pending','delivered','cancelled']))
+);
+CREATE INDEX IF NOT EXISTS idx_water_orders_customer_id ON public.water_orders (customer_id);
+CREATE INDEX IF NOT EXISTS idx_water_orders_status ON public.water_orders (status);
+
+-- =====================================================================
+-- LAUNDRY SERVICE (per-kg / per-item orders, ready/collected flow)
+-- =====================================================================
+CREATE TABLE public.laundry_services (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Wash & fold'
+  unit text DEFAULT 'kg'::text,              -- kg | item | pair | set
+  price numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT laundry_services_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.laundry_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_number text,
+  customer_name text NOT NULL,
+  customer_phone text,
+  received_date date DEFAULT CURRENT_DATE,
+  ready_date date,
+  status text DEFAULT 'received'::text,      -- received | washing | ready | collected | cancelled
+  total numeric DEFAULT 0,
+  paid boolean DEFAULT false,
+  express boolean DEFAULT false,
+  notes text,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT laundry_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT laundry_orders_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT laundry_orders_status_check CHECK (status = ANY (ARRAY['received','washing','ready','collected','cancelled']))
+);
+
+CREATE TABLE public.laundry_order_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_id uuid NOT NULL,
+  service_id uuid,
+  description text,
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  CONSTRAINT laundry_order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT laundry_order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.laundry_orders(id) ON DELETE CASCADE,
+  CONSTRAINT laundry_order_items_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.laundry_services(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_laundry_order_items_order_id ON public.laundry_order_items (order_id);
+CREATE INDEX IF NOT EXISTS idx_laundry_orders_status ON public.laundry_orders (status);
+
+-- =====================================================================
+-- AGRICULTURE / FARM (plots, crop cycles, field activities)
+-- A cycle is one crop grown on one plot for a season; activities log the
+-- inputs/labour (with cost) and the final harvest yield.
+-- =====================================================================
+CREATE TABLE public.farm_plots (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'North paddy'
+  area_hectares numeric DEFAULT 0,
+  location text,
+  soil_type text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT farm_plots_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.crop_cycles (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  plot_id uuid,
+  crop text NOT NULL,                        -- e.g. 'Rice', 'Cassava'
+  season text,                               -- e.g. 'Wet 2026'
+  planted_date date,
+  expected_harvest date,
+  status text DEFAULT 'planned'::text,       -- planned | growing | harvested | failed
+  yield_amount numeric,                      -- filled at harvest
+  yield_unit text DEFAULT 'kg'::text,
+  revenue numeric DEFAULT 0,                 -- sales from this harvest
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT crop_cycles_pkey PRIMARY KEY (id),
+  CONSTRAINT crop_cycles_plot_id_fkey FOREIGN KEY (plot_id) REFERENCES public.farm_plots(id) ON DELETE SET NULL,
+  CONSTRAINT crop_cycles_status_check CHECK (status = ANY (ARRAY['planned','growing','harvested','failed']))
+);
+
+CREATE TABLE public.farm_activities (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  cycle_id uuid NOT NULL,
+  type text DEFAULT 'other'::text,           -- planting | fertilizing | spraying | irrigation | weeding | harvest | other
+  date date DEFAULT CURRENT_DATE,
+  cost numeric DEFAULT 0,
+  labor_hours numeric DEFAULT 0,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT farm_activities_pkey PRIMARY KEY (id),
+  CONSTRAINT farm_activities_cycle_id_fkey FOREIGN KEY (cycle_id) REFERENCES public.crop_cycles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_crop_cycles_plot_id ON public.crop_cycles (plot_id);
+CREATE INDEX IF NOT EXISTS idx_farm_activities_cycle_id ON public.farm_activities (cycle_id);
+
+-- =====================================================================
+-- OPTICAL SHOP (eye exam prescriptions + eyewear orders)
+-- =====================================================================
+CREATE TABLE public.optical_prescriptions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_name text NOT NULL,
+  patient_phone text,
+  exam_date date DEFAULT CURRENT_DATE,
+  right_sph text, right_cyl text, right_axis text,
+  left_sph text, left_cyl text, left_axis text,
+  pd text,                                    -- pupillary distance
+  add_power text,                             -- reading add
+  optometrist_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT optical_prescriptions_pkey PRIMARY KEY (id),
+  CONSTRAINT optical_prescriptions_optometrist_id_fkey FOREIGN KEY (optometrist_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.optical_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_number text,
+  patient_name text NOT NULL,
+  patient_phone text,
+  prescription_id uuid,
+  frame_description text,
+  lens_type text,                            -- single vision | bifocal | progressive ...
+  frame_price numeric DEFAULT 0,
+  lens_price numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  status text DEFAULT 'ordered'::text,       -- ordered | ready | collected | cancelled
+  order_date date DEFAULT CURRENT_DATE,
+  ready_date date,
+  paid boolean DEFAULT false,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT optical_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT optical_orders_prescription_id_fkey FOREIGN KEY (prescription_id) REFERENCES public.optical_prescriptions(id) ON DELETE SET NULL,
+  CONSTRAINT optical_orders_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT optical_orders_status_check CHECK (status = ANY (ARRAY['ordered','ready','collected','cancelled']))
+);
+CREATE INDEX IF NOT EXISTS idx_optical_orders_status ON public.optical_orders (status);
+CREATE INDEX IF NOT EXISTS idx_optical_prescriptions_patient ON public.optical_prescriptions (patient_name);

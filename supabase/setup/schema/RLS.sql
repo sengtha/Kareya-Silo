@@ -799,3 +799,63 @@ CREATE POLICY "View tour departures" ON public.tour_departures FOR SELECT TO aut
 CREATE POLICY "Manage tour departures" ON public.tour_departures FOR ALL TO authenticated USING (has_any_role(ARRAY['Travel Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Travel Agent','Manager']));
 CREATE POLICY "View tour bookings" ON public.tour_bookings FOR SELECT TO authenticated USING (has_any_role(ARRAY['Travel Agent','Guide','Cashier','Accountant','Manager']));
 CREATE POLICY "Manage tour bookings" ON public.tour_bookings FOR ALL TO authenticated USING (has_any_role(ARRAY['Travel Agent','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Travel Agent','Cashier','Manager']));
+
+-- ---- gold / jewelry -----------------------------------------------------
+ALTER TABLE public.gold_rates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jewelry_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gold_transactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View gold rates" ON public.gold_rates FOR SELECT TO authenticated USING (has_any_role(ARRAY['Goldsmith','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gold rates" ON public.gold_rates FOR ALL TO authenticated USING (has_any_role(ARRAY['Goldsmith','Manager'])) WITH CHECK (has_any_role(ARRAY['Goldsmith','Manager']));
+CREATE POLICY "View jewelry products" ON public.jewelry_products FOR SELECT TO authenticated USING (has_any_role(ARRAY['Goldsmith','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage jewelry products" ON public.jewelry_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Goldsmith','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Goldsmith','Cashier','Manager']));
+CREATE POLICY "View gold transactions" ON public.gold_transactions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Goldsmith','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gold transactions" ON public.gold_transactions FOR ALL TO authenticated USING (has_any_role(ARRAY['Goldsmith','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Goldsmith','Cashier','Manager']));
+
+-- ---- money exchange -----------------------------------------------------
+ALTER TABLE public.fx_rates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fx_transactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View fx rates" ON public.fx_rates FOR SELECT TO authenticated USING (has_any_role(ARRAY['Teller','Accountant','Manager']));
+CREATE POLICY "Manage fx rates" ON public.fx_rates FOR ALL TO authenticated USING (has_any_role(ARRAY['Teller','Manager'])) WITH CHECK (has_any_role(ARRAY['Teller','Manager']));
+CREATE POLICY "View fx transactions" ON public.fx_transactions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Teller','Accountant','Manager']));
+CREATE POLICY "Manage fx transactions" ON public.fx_transactions FOR ALL TO authenticated USING (has_any_role(ARRAY['Teller','Manager'])) WITH CHECK (has_any_role(ARRAY['Teller','Manager']));
+
+-- ---- water delivery -----------------------------------------------------
+ALTER TABLE public.water_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.water_customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.water_orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View water products" ON public.water_products FOR SELECT TO authenticated USING (has_any_role(ARRAY['Water Agent','Driver','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage water products" ON public.water_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Water Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Water Agent','Manager']));
+CREATE POLICY "View water customers" ON public.water_customers FOR SELECT TO authenticated USING (has_any_role(ARRAY['Water Agent','Driver','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage water customers" ON public.water_customers FOR ALL TO authenticated USING (has_any_role(ARRAY['Water Agent','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Water Agent','Cashier','Manager']));
+CREATE POLICY "View water orders" ON public.water_orders FOR SELECT TO authenticated USING (has_any_role(ARRAY['Water Agent','Driver','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage water orders" ON public.water_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Water Agent','Driver','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Water Agent','Driver','Cashier','Manager']));
+
+-- ---- laundry ------------------------------------------------------------
+ALTER TABLE public.laundry_services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.laundry_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.laundry_order_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View laundry services" ON public.laundry_services FOR SELECT TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage laundry services" ON public.laundry_services FOR ALL TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Manager'])) WITH CHECK (has_any_role(ARRAY['Laundry Staff','Manager']));
+CREATE POLICY "View laundry orders" ON public.laundry_orders FOR SELECT TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage laundry orders" ON public.laundry_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Laundry Staff','Cashier','Manager']));
+CREATE POLICY "View laundry order items" ON public.laundry_order_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage laundry order items" ON public.laundry_order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Laundry Staff','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Laundry Staff','Cashier','Manager']));
+
+-- ---- agriculture / farm -------------------------------------------------
+ALTER TABLE public.farm_plots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.crop_cycles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.farm_activities ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View farm plots" ON public.farm_plots FOR SELECT TO authenticated USING (has_any_role(ARRAY['Farm Manager','Field Worker','Accountant','Manager']));
+CREATE POLICY "Manage farm plots" ON public.farm_plots FOR ALL TO authenticated USING (has_any_role(ARRAY['Farm Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Farm Manager','Manager']));
+CREATE POLICY "View crop cycles" ON public.crop_cycles FOR SELECT TO authenticated USING (has_any_role(ARRAY['Farm Manager','Field Worker','Accountant','Manager']));
+CREATE POLICY "Manage crop cycles" ON public.crop_cycles FOR ALL TO authenticated USING (has_any_role(ARRAY['Farm Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Farm Manager','Manager']));
+CREATE POLICY "View farm activities" ON public.farm_activities FOR SELECT TO authenticated USING (has_any_role(ARRAY['Farm Manager','Field Worker','Accountant','Manager']));
+CREATE POLICY "Manage farm activities" ON public.farm_activities FOR ALL TO authenticated USING (has_any_role(ARRAY['Farm Manager','Field Worker','Manager'])) WITH CHECK (has_any_role(ARRAY['Farm Manager','Field Worker','Manager']));
+
+-- ---- optical ------------------------------------------------------------
+ALTER TABLE public.optical_prescriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.optical_orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View optical rx" ON public.optical_prescriptions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Optometrist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage optical rx" ON public.optical_prescriptions FOR ALL TO authenticated USING (has_any_role(ARRAY['Optometrist','Manager'])) WITH CHECK (has_any_role(ARRAY['Optometrist','Manager']));
+CREATE POLICY "View optical orders" ON public.optical_orders FOR SELECT TO authenticated USING (has_any_role(ARRAY['Optometrist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage optical orders" ON public.optical_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Optometrist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Optometrist','Cashier','Manager']));
