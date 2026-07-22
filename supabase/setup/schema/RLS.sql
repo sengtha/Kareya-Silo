@@ -278,3 +278,15 @@ ALTER TABLE public.currencies ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View currencies" ON public.currencies FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage currencies" ON public.currencies FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+-- ---- manufacturing: BOM & work orders ---------------------------------
+ALTER TABLE public.bills_of_materials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bom_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View boms" ON public.bills_of_materials FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage boms" ON public.bills_of_materials FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View bom items" ON public.bom_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage bom items" ON public.bom_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View work orders" ON public.work_orders FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage work orders" ON public.work_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));

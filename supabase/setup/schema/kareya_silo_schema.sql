@@ -1171,3 +1171,49 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.seed_currencies() TO authenticated;
+
+-- =====================================================================
+-- MANUFACTURING: bills of materials & work orders
+-- A BOM defines the components consumed to build one unit of a finished
+-- stock item. Completing a work order consumes component stock (out) and
+-- produces finished stock (in).
+-- =====================================================================
+CREATE TABLE public.bills_of_materials (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  output_item_id uuid,                   -- finished good (a stock item)
+  output_quantity numeric DEFAULT 1,     -- units produced per build
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT bills_of_materials_pkey PRIMARY KEY (id),
+  CONSTRAINT bom_output_item_fkey FOREIGN KEY (output_item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.bom_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  bom_id uuid,
+  stock_item_id uuid,                    -- component consumed
+  quantity numeric DEFAULT 1,            -- per single build
+  CONSTRAINT bom_items_pkey PRIMARY KEY (id),
+  CONSTRAINT bom_items_bom_id_fkey FOREIGN KEY (bom_id) REFERENCES public.bills_of_materials(id) ON DELETE CASCADE,
+  CONSTRAINT bom_items_stock_item_id_fkey FOREIGN KEY (stock_item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.work_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  wo_number text NOT NULL,
+  bom_id uuid,
+  quantity numeric DEFAULT 1,            -- number of builds
+  status text DEFAULT 'planned'::text,   -- planned | in_progress | done | cancelled
+  start_date date DEFAULT CURRENT_DATE,
+  due_date date,
+  completed_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT work_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT work_orders_bom_id_fkey FOREIGN KEY (bom_id) REFERENCES public.bills_of_materials(id) ON DELETE SET NULL,
+  CONSTRAINT work_orders_status_check CHECK (status = ANY (ARRAY['planned','in_progress','done','cancelled']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bom_items_bom_id ON public.bom_items (bom_id);
+CREATE INDEX IF NOT EXISTS idx_work_orders_bom_id ON public.work_orders (bom_id);
