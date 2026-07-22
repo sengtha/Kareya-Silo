@@ -984,3 +984,26 @@ CREATE TABLE public.time_entries (
 CREATE INDEX IF NOT EXISTS idx_project_milestones_project_id ON public.project_milestones (project_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_project_id ON public.time_entries (project_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_employee_id ON public.time_entries (employee_id);
+
+-- =====================================================================
+-- MARKETING: campaigns (multi-channel, with budget & funnel metrics)
+-- =====================================================================
+CREATE TABLE public.campaigns (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  channel text DEFAULT 'email'::text,       -- email | social | sms | event | ads
+  status text DEFAULT 'draft'::text,        -- draft | scheduled | active | completed | cancelled
+  audience text,
+  start_date date,
+  end_date date,
+  budget numeric DEFAULT 0,
+  spent numeric DEFAULT 0,
+  reach integer DEFAULT 0,                  -- delivered / impressions
+  opened integer DEFAULT 0,
+  clicked integer DEFAULT 0,
+  converted integer DEFAULT 0,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT campaigns_pkey PRIMARY KEY (id),
+  CONSTRAINT campaigns_status_check CHECK (status = ANY (ARRAY['draft','scheduled','active','completed','cancelled']))
+);

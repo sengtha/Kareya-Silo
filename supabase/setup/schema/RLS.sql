@@ -236,3 +236,9 @@ CREATE POLICY "View time entries" ON public.time_entries FOR SELECT TO authentic
 CREATE POLICY "Log own time" ON public.time_entries FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
 CREATE POLICY "Update time entries" ON public.time_entries FOR UPDATE TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
 CREATE POLICY "Delete time entries" ON public.time_entries FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
+
+-- ---- marketing: campaigns ---------------------------------------------
+ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View campaigns" ON public.campaigns FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage campaigns" ON public.campaigns FOR ALL TO authenticated USING (has_any_role(ARRAY['Marketing'])) WITH CHECK (has_any_role(ARRAY['Marketing']));
