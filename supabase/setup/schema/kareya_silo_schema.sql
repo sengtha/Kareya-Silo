@@ -1775,3 +1775,110 @@ CREATE INDEX IF NOT EXISTS idx_assessments_section_id ON public.assessments (sec
 CREATE INDEX IF NOT EXISTS idx_assessment_grades_assessment_id ON public.assessment_grades (assessment_id);
 CREATE INDEX IF NOT EXISTS idx_student_attendance_section_id ON public.student_attendance (section_id);
 CREATE INDEX IF NOT EXISTS idx_student_invoices_student_id ON public.student_invoices (student_id);
+
+-- =====================================================================
+-- LIMS (Laboratory Information Management System)
+-- Test catalog -> sample accessioning -> test orders -> result entry
+-- (auto-flagged vs reference range) -> verification -> report.
+-- Plus instruments (calibration) and quality-control runs.
+-- =====================================================================
+CREATE TABLE public.lab_tests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  code text,
+  category text,
+  method text,
+  specimen_type text,                    -- blood | urine | swab | water | food ...
+  unit text,
+  ref_low numeric,
+  ref_high numeric,
+  ref_text text,                         -- for qualitative tests (e.g. "Negative")
+  price numeric DEFAULT 0,
+  tat_hours integer DEFAULT 24,          -- turnaround target
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lab_tests_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.lab_samples (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  accession_number text NOT NULL,
+  patient_name text,
+  patient_ref text,                      -- MRN / external id
+  client_id uuid,
+  sample_type text,
+  source text,
+  priority text DEFAULT 'routine'::text, -- routine | urgent | stat
+  status text DEFAULT 'received'::text,  -- received | in_progress | completed | reported | rejected
+  collected_at timestamp with time zone,
+  received_at timestamp with time zone DEFAULT now(),
+  reported_at timestamp with time zone,
+  storage_location text,
+  ordered_by text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lab_samples_pkey PRIMARY KEY (id),
+  CONSTRAINT lab_samples_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE SET NULL,
+  CONSTRAINT lab_samples_priority_check CHECK (priority = ANY (ARRAY['routine','urgent','stat'])),
+  CONSTRAINT lab_samples_status_check CHECK (status = ANY (ARRAY['received','in_progress','completed','reported','rejected']))
+);
+
+CREATE TABLE public.lab_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sample_id uuid,
+  test_id uuid,
+  status text DEFAULT 'pending'::text,   -- pending | in_progress | resulted | verified | rejected
+  result_value numeric,
+  result_flag text,                      -- normal | high | low | abnormal | positive | negative
+  result_text text,
+  resulted_by uuid,
+  resulted_at timestamp with time zone,
+  verified_by uuid,
+  verified_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lab_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT lab_orders_sample_id_fkey FOREIGN KEY (sample_id) REFERENCES public.lab_samples(id) ON DELETE CASCADE,
+  CONSTRAINT lab_orders_test_id_fkey FOREIGN KEY (test_id) REFERENCES public.lab_tests(id) ON DELETE SET NULL,
+  CONSTRAINT lab_orders_resulted_by_fkey FOREIGN KEY (resulted_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT lab_orders_verified_by_fkey FOREIGN KEY (verified_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT lab_orders_status_check CHECK (status = ANY (ARRAY['pending','in_progress','resulted','verified','rejected']))
+);
+
+CREATE TABLE public.lab_instruments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  type text,
+  serial text,
+  manufacturer text,
+  status text DEFAULT 'active'::text,    -- active | maintenance | retired
+  last_calibration date,
+  next_calibration date,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lab_instruments_pkey PRIMARY KEY (id),
+  CONSTRAINT lab_instruments_status_check CHECK (status = ANY (ARRAY['active','maintenance','retired']))
+);
+
+CREATE TABLE public.lab_qc_runs (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  instrument_id uuid,
+  test_id uuid,
+  level text DEFAULT 'normal'::text,     -- low | normal | high
+  run_date date DEFAULT CURRENT_DATE,
+  expected numeric,
+  measured numeric,
+  status text DEFAULT 'pass'::text,      -- pass | warning | fail
+  performed_by uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lab_qc_runs_pkey PRIMARY KEY (id),
+  CONSTRAINT lab_qc_runs_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES public.lab_instruments(id) ON DELETE SET NULL,
+  CONSTRAINT lab_qc_runs_test_id_fkey FOREIGN KEY (test_id) REFERENCES public.lab_tests(id) ON DELETE SET NULL,
+  CONSTRAINT lab_qc_runs_performed_by_fkey FOREIGN KEY (performed_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT lab_qc_runs_status_check CHECK (status = ANY (ARRAY['pass','warning','fail']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_lab_orders_sample_id ON public.lab_orders (sample_id);
+CREATE INDEX IF NOT EXISTS idx_lab_samples_status ON public.lab_samples (status);
+CREATE INDEX IF NOT EXISTS idx_lab_qc_runs_run_date ON public.lab_qc_runs (run_date);

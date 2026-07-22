@@ -415,3 +415,21 @@ CREATE POLICY "View grades" ON public.assessment_grades FOR SELECT TO authentica
 CREATE POLICY "Manage grades" ON public.assessment_grades FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
 CREATE POLICY "View student attendance" ON public.student_attendance FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage student attendance" ON public.student_attendance FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
+
+-- ---- LIMS (laboratory) ------------------------------------------------
+ALTER TABLE public.lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lab_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lab_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lab_instruments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lab_qc_runs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View lab tests" ON public.lab_tests FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lab tests" ON public.lab_tests FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
+CREATE POLICY "View lab samples" ON public.lab_samples FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lab samples" ON public.lab_samples FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
+CREATE POLICY "View lab orders" ON public.lab_orders FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lab orders" ON public.lab_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
+CREATE POLICY "View lab instruments" ON public.lab_instruments FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lab instruments" ON public.lab_instruments FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
+CREATE POLICY "View lab qc" ON public.lab_qc_runs FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lab qc" ON public.lab_qc_runs FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
