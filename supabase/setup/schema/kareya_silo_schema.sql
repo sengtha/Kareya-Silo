@@ -2851,6 +2851,161 @@ CREATE INDEX IF NOT EXISTS idx_rental_invoices_lease_id ON public.rental_invoice
 CREATE INDEX IF NOT EXISTS idx_rental_payments_invoice_id ON public.rental_payments (invoice_id);
 
 -- =====================================================================
+-- WORKSHOP / GARAGE (auto & moto service — job cards, parts + labor)
+-- =====================================================================
+CREATE TABLE public.workshop_jobs (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  job_number text,
+  customer_name text,
+  customer_phone text,
+  vehicle_plate text,
+  vehicle_model text,
+  odometer numeric,
+  complaint text,
+  status text DEFAULT 'open'::text,          -- open | in_progress | done | invoiced | cancelled
+  assigned_to uuid,
+  parts_total numeric DEFAULT 0,
+  labor_total numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  currency text DEFAULT 'USD'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT workshop_jobs_pkey PRIMARY KEY (id),
+  CONSTRAINT workshop_jobs_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT workshop_jobs_status_check CHECK (status = ANY (ARRAY['open','in_progress','done','invoiced','cancelled']))
+);
+CREATE TABLE public.workshop_job_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  job_id uuid NOT NULL,
+  type text DEFAULT 'part'::text,            -- part | labor
+  description text,
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  line_total numeric DEFAULT 0,
+  CONSTRAINT workshop_job_items_pkey PRIMARY KEY (id),
+  CONSTRAINT workshop_job_items_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.workshop_jobs(id) ON DELETE CASCADE,
+  CONSTRAINT workshop_job_items_type_check CHECK (type = ANY (ARRAY['part','labor']))
+);
+CREATE INDEX IF NOT EXISTS idx_workshop_job_items_job_id ON public.workshop_job_items (job_id);
+
+-- =====================================================================
+-- SALON / SPA (services + appointments)
+-- =====================================================================
+CREATE TABLE public.salon_services (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  category text,
+  duration_min integer DEFAULT 30,
+  price numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT salon_services_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.salon_appointments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  customer_name text,
+  customer_phone text,
+  service_id uuid,
+  staff_id uuid,
+  scheduled_at timestamp with time zone,
+  duration_min integer DEFAULT 30,
+  price numeric DEFAULT 0,
+  status text DEFAULT 'booked'::text,        -- booked | confirmed | completed | cancelled | no_show
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT salon_appointments_pkey PRIMARY KEY (id),
+  CONSTRAINT salon_appointments_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.salon_services(id) ON DELETE SET NULL,
+  CONSTRAINT salon_appointments_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT salon_appointments_status_check CHECK (status = ANY (ARRAY['booked','confirmed','completed','cancelled','no_show']))
+);
+CREATE INDEX IF NOT EXISTS idx_salon_appointments_scheduled ON public.salon_appointments (scheduled_at);
+
+-- =====================================================================
+-- CONSTRUCTION (projects, BOQ, progress billing, subcontractors)
+-- =====================================================================
+CREATE TABLE public.construction_projects (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  code text,
+  client_name text,
+  contract_value numeric DEFAULT 0,
+  start_date date,
+  end_date date,
+  status text DEFAULT 'planning'::text,      -- planning | active | on_hold | completed
+  currency text DEFAULT 'USD'::text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT construction_projects_pkey PRIMARY KEY (id),
+  CONSTRAINT construction_projects_status_check CHECK (status = ANY (ARRAY['planning','active','on_hold','completed']))
+);
+CREATE TABLE public.construction_boq (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  project_id uuid NOT NULL,
+  item_no text,
+  description text,
+  unit text,
+  quantity numeric DEFAULT 0,
+  unit_rate numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  CONSTRAINT construction_boq_pkey PRIMARY KEY (id),
+  CONSTRAINT construction_boq_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.construction_projects(id) ON DELETE CASCADE
+);
+CREATE TABLE public.progress_claims (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  project_id uuid NOT NULL,
+  claim_number text,
+  period text,
+  percent_complete numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  status text DEFAULT 'draft'::text,         -- draft | submitted | certified | paid
+  date date DEFAULT CURRENT_DATE,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT progress_claims_pkey PRIMARY KEY (id),
+  CONSTRAINT progress_claims_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.construction_projects(id) ON DELETE CASCADE,
+  CONSTRAINT progress_claims_status_check CHECK (status = ANY (ARRAY['draft','submitted','certified','paid']))
+);
+CREATE TABLE public.subcontractors (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  trade text,
+  phone text,
+  email text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT subcontractors_pkey PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS idx_construction_boq_project_id ON public.construction_boq (project_id);
+CREATE INDEX IF NOT EXISTS idx_progress_claims_project_id ON public.progress_claims (project_id);
+
+-- =====================================================================
+-- LOGISTICS / COURIER (deliveries, driver assignment, COD, POD)
+-- =====================================================================
+CREATE TABLE public.deliveries (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  tracking_number text,
+  sender_name text,
+  recipient_name text,
+  recipient_phone text,
+  pickup_address text,
+  dropoff_address text,
+  driver_id uuid,
+  vehicle_id uuid,
+  status text DEFAULT 'pending'::text,       -- pending | assigned | picked_up | in_transit | delivered | failed
+  cod_amount numeric DEFAULT 0,              -- cash on delivery to collect
+  fee numeric DEFAULT 0,
+  pod_url text,                              -- proof of delivery
+  scheduled_date date,
+  delivered_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT deliveries_pkey PRIMARY KEY (id),
+  CONSTRAINT deliveries_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT deliveries_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE SET NULL,
+  CONSTRAINT deliveries_status_check CHECK (status = ANY (ARRAY['pending','assigned','picked_up','in_transit','delivered','failed']))
+);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status ON public.deliveries (status);
+CREATE INDEX IF NOT EXISTS idx_deliveries_driver_id ON public.deliveries (driver_id);
+
+-- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
 -- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
 -- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —

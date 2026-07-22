@@ -607,6 +607,41 @@ CREATE POLICY "Manage rental invoices" ON public.rental_invoices FOR ALL TO auth
 CREATE POLICY "View rental payments" ON public.rental_payments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
 CREATE POLICY "Manage rental payments" ON public.rental_payments FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
 
+-- ---- workshop / garage -------------------------------------------------
+ALTER TABLE public.workshop_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workshop_job_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View workshop jobs" ON public.workshop_jobs FOR SELECT TO authenticated USING (has_any_role(ARRAY['Mechanic','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage workshop jobs" ON public.workshop_jobs FOR ALL TO authenticated USING (has_any_role(ARRAY['Mechanic','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Mechanic','Cashier','Manager']));
+CREATE POLICY "View workshop items" ON public.workshop_job_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Mechanic','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage workshop items" ON public.workshop_job_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Mechanic','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Mechanic','Cashier','Manager']));
+
+-- ---- salon / spa -------------------------------------------------------
+ALTER TABLE public.salon_services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.salon_appointments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View salon services" ON public.salon_services FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage salon services" ON public.salon_services FOR ALL TO authenticated USING (has_any_role(ARRAY['Stylist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Stylist','Cashier','Manager']));
+CREATE POLICY "View salon appointments" ON public.salon_appointments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Stylist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage salon appointments" ON public.salon_appointments FOR ALL TO authenticated USING (has_any_role(ARRAY['Stylist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Stylist','Cashier','Manager']));
+
+-- ---- construction ------------------------------------------------------
+ALTER TABLE public.construction_projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.construction_boq ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.progress_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.subcontractors ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View construction projects" ON public.construction_projects FOR SELECT TO authenticated USING (has_any_role(ARRAY['Site Manager','Accountant','Manager']));
+CREATE POLICY "Manage construction projects" ON public.construction_projects FOR ALL TO authenticated USING (has_any_role(ARRAY['Site Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Site Manager','Manager']));
+CREATE POLICY "View construction boq" ON public.construction_boq FOR SELECT TO authenticated USING (has_any_role(ARRAY['Site Manager','Accountant','Manager']));
+CREATE POLICY "Manage construction boq" ON public.construction_boq FOR ALL TO authenticated USING (has_any_role(ARRAY['Site Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Site Manager','Manager']));
+CREATE POLICY "View progress claims" ON public.progress_claims FOR SELECT TO authenticated USING (has_any_role(ARRAY['Site Manager','Accountant','Manager']));
+CREATE POLICY "Manage progress claims" ON public.progress_claims FOR ALL TO authenticated USING (has_any_role(ARRAY['Site Manager','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Site Manager','Accountant','Manager']));
+CREATE POLICY "View subcontractors" ON public.subcontractors FOR SELECT TO authenticated USING (has_any_role(ARRAY['Site Manager','Accountant','Manager']));
+CREATE POLICY "Manage subcontractors" ON public.subcontractors FOR ALL TO authenticated USING (has_any_role(ARRAY['Site Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Site Manager','Manager']));
+
+-- ---- logistics / courier -----------------------------------------------
+ALTER TABLE public.deliveries ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View deliveries" ON public.deliveries FOR SELECT TO authenticated USING (has_any_role(ARRAY['Dispatcher','Driver','Accountant','Manager']));
+CREATE POLICY "Manage deliveries" ON public.deliveries FOR ALL TO authenticated USING (has_any_role(ARRAY['Dispatcher','Driver','Manager'])) WITH CHECK (has_any_role(ARRAY['Dispatcher','Driver','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which
