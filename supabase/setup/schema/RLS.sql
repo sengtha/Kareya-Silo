@@ -217,3 +217,9 @@ CREATE POLICY "Manage stock items" ON public.stock_items FOR ALL TO authenticate
 
 CREATE POLICY "View stock movements" ON public.stock_movements FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage stock movements" ON public.stock_movements FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+
+-- ---- support: knowledge base ------------------------------------------
+ALTER TABLE public.kb_articles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View kb articles" ON public.kb_articles FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage kb articles" ON public.kb_articles FOR ALL TO authenticated USING (has_any_role(ARRAY['Support'])) WITH CHECK (has_any_role(ARRAY['Support']));

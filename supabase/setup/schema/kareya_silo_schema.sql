@@ -913,3 +913,34 @@ CREATE TABLE public.stock_movements (
 
 CREATE INDEX IF NOT EXISTS idx_stock_items_vendor_id ON public.stock_items (vendor_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item_id ON public.stock_movements (item_id);
+
+-- =====================================================================
+-- SUPPORT upgrades: categories, SLA tracking, CSAT, knowledge base
+-- =====================================================================
+-- Extend tickets with category, SLA targets, response/resolution stamps
+-- and a customer-satisfaction score.
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS category text;
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS due_at timestamp with time zone;         -- SLA target (set from priority)
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS first_response_at timestamp with time zone;
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS resolved_at timestamp with time zone;
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS csat_rating integer;                     -- 1..5
+ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS csat_comment text;
+ALTER TABLE public.tickets ADD CONSTRAINT tickets_csat_rating_check CHECK (csat_rating IS NULL OR csat_rating BETWEEN 1 AND 5);
+
+-- Knowledge base / help centre articles (self-service deflection)
+CREATE TABLE public.kb_articles (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  category text,
+  content text,
+  tags text[] DEFAULT ARRAY[]::text[],
+  is_published boolean DEFAULT false,
+  views integer DEFAULT 0,
+  author_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT kb_articles_pkey PRIMARY KEY (id),
+  CONSTRAINT kb_articles_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_articles_category ON public.kb_articles (category);
