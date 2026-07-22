@@ -554,6 +554,21 @@ CREATE POLICY "Manage pharmacy sales" ON public.pharmacy_sales FOR ALL TO authen
 CREATE POLICY "View pharmacy sale items" ON public.pharmacy_sale_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Accountant','Manager']));
 CREATE POLICY "Manage pharmacy sale items" ON public.pharmacy_sale_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pharmacist','Cashier','Manager']));
 
+-- ---- retail POS --------------------------------------------------------
+ALTER TABLE public.retail_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.retail_shifts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.retail_sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.retail_sale_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View retail products" ON public.retail_products FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage retail products" ON public.retail_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+CREATE POLICY "View retail shifts" ON public.retail_shifts FOR SELECT TO authenticated USING (has_any_role(ARRAY['Cashier','Accountant','Manager']));
+CREATE POLICY "Manage retail shifts" ON public.retail_shifts FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+CREATE POLICY "View retail sales" ON public.retail_sales FOR SELECT TO authenticated USING (has_any_role(ARRAY['Cashier','Accountant','Manager']));
+CREATE POLICY "Manage retail sales" ON public.retail_sales FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+CREATE POLICY "View retail sale items" ON public.retail_sale_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Cashier','Accountant','Manager']));
+CREATE POLICY "Manage retail sale items" ON public.retail_sale_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which

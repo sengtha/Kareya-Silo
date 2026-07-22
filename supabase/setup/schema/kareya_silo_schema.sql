@@ -2599,6 +2599,81 @@ CREATE INDEX IF NOT EXISTS idx_pharmacy_batches_expiry ON public.pharmacy_batche
 CREATE INDEX IF NOT EXISTS idx_pharmacy_sale_items_sale_id ON public.pharmacy_sale_items (sale_id);
 
 -- =====================================================================
+-- RETAIL POS (barcode retail, cashier shifts / Z-reports)
+-- =====================================================================
+CREATE TABLE public.retail_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  sku text,
+  barcode text,
+  category text,
+  price numeric DEFAULT 0,
+  cost numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  quantity numeric DEFAULT 0,
+  reorder_level numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT retail_products_pkey PRIMARY KEY (id)
+);
+
+-- A cashier session. Closing it produces the Z-report (expected vs counted cash).
+CREATE TABLE public.retail_shifts (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  opened_by uuid,
+  opened_at timestamp with time zone DEFAULT now(),
+  opening_float numeric DEFAULT 0,
+  closed_at timestamp with time zone,
+  counted_cash numeric,
+  expected_cash numeric,
+  variance numeric,
+  status text DEFAULT 'open'::text,          -- open | closed
+  note text,
+  CONSTRAINT retail_shifts_pkey PRIMARY KEY (id),
+  CONSTRAINT retail_shifts_opened_by_fkey FOREIGN KEY (opened_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT retail_shifts_status_check CHECK (status = ANY (ARRAY['open','closed']))
+);
+
+CREATE TABLE public.retail_sales (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sale_number text,
+  shift_id uuid,
+  subtotal numeric DEFAULT 0,
+  discount numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  payment_method text DEFAULT 'cash'::text,  -- cash | card | qr | transfer
+  tendered numeric DEFAULT 0,
+  change_due numeric DEFAULT 0,
+  customer_name text,
+  sold_by uuid,
+  status text DEFAULT 'completed'::text,     -- completed | void
+  currency text DEFAULT 'USD'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT retail_sales_pkey PRIMARY KEY (id),
+  CONSTRAINT retail_sales_shift_id_fkey FOREIGN KEY (shift_id) REFERENCES public.retail_shifts(id) ON DELETE SET NULL,
+  CONSTRAINT retail_sales_sold_by_fkey FOREIGN KEY (sold_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT retail_sales_status_check CHECK (status = ANY (ARRAY['completed','void']))
+);
+
+CREATE TABLE public.retail_sale_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sale_id uuid NOT NULL,
+  product_id uuid,
+  name text,
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  line_total numeric DEFAULT 0,
+  CONSTRAINT retail_sale_items_pkey PRIMARY KEY (id),
+  CONSTRAINT retail_sale_items_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.retail_sales(id) ON DELETE CASCADE,
+  CONSTRAINT retail_sale_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.retail_products(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_retail_products_barcode ON public.retail_products (barcode);
+CREATE INDEX IF NOT EXISTS idx_retail_sales_shift_id ON public.retail_sales (shift_id);
+CREATE INDEX IF NOT EXISTS idx_retail_sale_items_sale_id ON public.retail_sale_items (sale_id);
+
+-- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
 -- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
 -- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —
