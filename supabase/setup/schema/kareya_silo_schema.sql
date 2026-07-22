@@ -707,12 +707,14 @@ BEGIN
     ('3100', 'Retained Earnings', 'equity', 'retained', true),
     ('4000', 'Sales Revenue', 'income', 'sales', true),
     ('4100', 'Other Income', 'income', 'other', false),
+    ('4200', 'Grant Income', 'income', 'grant', false),
     ('5000', 'Cost of Goods Sold', 'expense', 'cogs', false),
     ('5100', 'Salaries & Wages', 'expense', 'payroll', true),
     ('5200', 'Rent', 'expense', 'operating', false),
     ('5300', 'Utilities', 'expense', 'operating', false),
     ('5400', 'Office Supplies', 'expense', 'operating', false),
     ('5500', 'Depreciation Expense', 'expense', 'operating', false),
+    ('5600', 'Grant / Program Expenses', 'expense', 'grant', false),
     ('5900', 'Other Expenses', 'expense', 'other', false);
 
   INSERT INTO tax_rates (name, rate, is_default) VALUES ('VAT 10%', 10, true), ('Zero-rated', 0, false);
