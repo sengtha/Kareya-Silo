@@ -1603,3 +1603,175 @@ CREATE TABLE public.course_enrollments (
 
 CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id ON public.course_lessons (course_id);
 CREATE INDEX IF NOT EXISTS idx_course_enrollments_employee_id ON public.course_enrollments (employee_id);
+
+-- =====================================================================
+-- ACADEMY (Student Information System + academic LMS)
+-- A generic academic model that fits both K-12 schools and universities.
+-- Students are distinct from staff (employees); teachers ARE employees.
+-- =====================================================================
+CREATE TABLE public.academic_terms (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                    -- "Semester 1 2026", "Term 2", "2026"
+  type text DEFAULT 'semester'::text,    -- semester | term | trimester | year
+  start_date date,
+  end_date date,
+  is_current boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT academic_terms_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.academic_programs (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                    -- "Grade 10", "BSc Computer Science"
+  code text,
+  level text,                            -- primary | secondary | undergraduate | postgraduate ...
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT academic_programs_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.subjects (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  code text,
+  credit_hours numeric DEFAULT 0,
+  program_id uuid,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT subjects_pkey PRIMARY KEY (id),
+  CONSTRAINT subjects_program_id_fkey FOREIGN KEY (program_id) REFERENCES public.academic_programs(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.students (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  student_number text,
+  name text NOT NULL,
+  email text,
+  phone text,
+  date_of_birth date,
+  gender text,
+  guardian_name text,
+  guardian_phone text,
+  guardian_email text,
+  address text,
+  program_id uuid,
+  status text DEFAULT 'enrolled'::text,  -- applicant | enrolled | graduated | withdrawn | suspended
+  enrolled_date date DEFAULT CURRENT_DATE,
+  photo_url text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT students_pkey PRIMARY KEY (id),
+  CONSTRAINT students_program_id_fkey FOREIGN KEY (program_id) REFERENCES public.academic_programs(id) ON DELETE SET NULL,
+  CONSTRAINT students_status_check CHECK (status = ANY (ARRAY['applicant','enrolled','graduated','withdrawn','suspended']))
+);
+
+-- A scheduled offering of a subject in a term (class / course section).
+CREATE TABLE public.class_sections (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  subject_id uuid,
+  term_id uuid,
+  teacher_id uuid,
+  name text,                             -- section label, e.g. "10A", "Section 2"
+  room text,
+  schedule_days text,                    -- "Mon,Wed,Fri"
+  start_time text,
+  end_time text,
+  capacity integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT class_sections_pkey PRIMARY KEY (id),
+  CONSTRAINT class_sections_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id) ON DELETE CASCADE,
+  CONSTRAINT class_sections_term_id_fkey FOREIGN KEY (term_id) REFERENCES public.academic_terms(id) ON DELETE SET NULL,
+  CONSTRAINT class_sections_teacher_id_fkey FOREIGN KEY (teacher_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.section_enrollments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  section_id uuid,
+  student_id uuid,
+  status text DEFAULT 'active'::text,    -- active | dropped | completed
+  final_score numeric,
+  final_grade text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT section_enrollments_pkey PRIMARY KEY (id),
+  CONSTRAINT section_enrollments_section_id_fkey FOREIGN KEY (section_id) REFERENCES public.class_sections(id) ON DELETE CASCADE,
+  CONSTRAINT section_enrollments_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE,
+  CONSTRAINT section_enrollments_unique UNIQUE (section_id, student_id)
+);
+
+CREATE TABLE public.assessments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  section_id uuid,
+  name text NOT NULL,
+  type text DEFAULT 'assignment'::text,  -- assignment | quiz | midterm | final | exam | project
+  max_score numeric DEFAULT 100,
+  weight numeric DEFAULT 1,
+  due_date date,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT assessments_pkey PRIMARY KEY (id),
+  CONSTRAINT assessments_section_id_fkey FOREIGN KEY (section_id) REFERENCES public.class_sections(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.assessment_grades (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  assessment_id uuid,
+  student_id uuid,
+  score numeric,
+  feedback text,
+  CONSTRAINT assessment_grades_pkey PRIMARY KEY (id),
+  CONSTRAINT assessment_grades_assessment_id_fkey FOREIGN KEY (assessment_id) REFERENCES public.assessments(id) ON DELETE CASCADE,
+  CONSTRAINT assessment_grades_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE,
+  CONSTRAINT assessment_grades_unique UNIQUE (assessment_id, student_id)
+);
+
+CREATE TABLE public.student_attendance (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  section_id uuid,
+  student_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'present'::text,   -- present | absent | late | excused
+  CONSTRAINT student_attendance_pkey PRIMARY KEY (id),
+  CONSTRAINT student_attendance_section_id_fkey FOREIGN KEY (section_id) REFERENCES public.class_sections(id) ON DELETE CASCADE,
+  CONSTRAINT student_attendance_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE,
+  CONSTRAINT student_attendance_unique UNIQUE (section_id, student_id, date)
+);
+
+CREATE TABLE public.fee_structures (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  program_id uuid,
+  term_id uuid,
+  amount numeric DEFAULT 0,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT fee_structures_pkey PRIMARY KEY (id),
+  CONSTRAINT fee_structures_program_id_fkey FOREIGN KEY (program_id) REFERENCES public.academic_programs(id) ON DELETE SET NULL,
+  CONSTRAINT fee_structures_term_id_fkey FOREIGN KEY (term_id) REFERENCES public.academic_terms(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.student_invoices (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  invoice_number text,
+  student_id uuid,
+  term_id uuid,
+  fee_structure_id uuid,
+  description text,
+  amount numeric DEFAULT 0,
+  amount_paid numeric DEFAULT 0,
+  status text DEFAULT 'unpaid'::text,    -- unpaid | partial | paid
+  due_date date,
+  issued_date date DEFAULT CURRENT_DATE,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT student_invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT student_invoices_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE,
+  CONSTRAINT student_invoices_term_id_fkey FOREIGN KEY (term_id) REFERENCES public.academic_terms(id) ON DELETE SET NULL,
+  CONSTRAINT student_invoices_fee_structure_id_fkey FOREIGN KEY (fee_structure_id) REFERENCES public.fee_structures(id) ON DELETE SET NULL,
+  CONSTRAINT student_invoices_status_check CHECK (status = ANY (ARRAY['unpaid','partial','paid']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_students_program_id ON public.students (program_id);
+CREATE INDEX IF NOT EXISTS idx_class_sections_term_id ON public.class_sections (term_id);
+CREATE INDEX IF NOT EXISTS idx_section_enrollments_section_id ON public.section_enrollments (section_id);
+CREATE INDEX IF NOT EXISTS idx_assessments_section_id ON public.assessments (section_id);
+CREATE INDEX IF NOT EXISTS idx_assessment_grades_assessment_id ON public.assessment_grades (assessment_id);
+CREATE INDEX IF NOT EXISTS idx_student_attendance_section_id ON public.student_attendance (section_id);
+CREATE INDEX IF NOT EXISTS idx_student_invoices_student_id ON public.student_invoices (student_id);

@@ -376,3 +376,42 @@ CREATE POLICY "View enrollments" ON public.course_enrollments FOR SELECT TO auth
 CREATE POLICY "Enrol self" ON public.course_enrollments FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR is_hr_or_admin());
 CREATE POLICY "Update own enrollment" ON public.course_enrollments FOR UPDATE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
 CREATE POLICY "Delete own enrollment" ON public.course_enrollments FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+
+-- ---- academy (student information system) -----------------------------
+ALTER TABLE public.academic_terms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.academic_programs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.class_sections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.section_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.assessments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.assessment_grades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.student_attendance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fee_structures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.student_invoices ENABLE ROW LEVEL SECURITY;
+
+-- Registrar/admin domain: view for all staff, manage by HR/Admin.
+CREATE POLICY "View terms" ON public.academic_terms FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage terms" ON public.academic_terms FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View programs" ON public.academic_programs FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage programs" ON public.academic_programs FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View subjects" ON public.subjects FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage subjects" ON public.subjects FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View students" ON public.students FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage students" ON public.students FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View fee structures" ON public.fee_structures FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage fee structures" ON public.fee_structures FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View student invoices" ON public.student_invoices FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage student invoices" ON public.student_invoices FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Accountant']) OR is_hr_or_admin());
+
+-- Teaching domain: teachers (and HR/Admin) manage their classes, grades & attendance.
+CREATE POLICY "View sections" ON public.class_sections FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage sections" ON public.class_sections FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
+CREATE POLICY "View sec enrollments" ON public.section_enrollments FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage sec enrollments" ON public.section_enrollments FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
+CREATE POLICY "View assessments" ON public.assessments FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage assessments" ON public.assessments FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
+CREATE POLICY "View grades" ON public.assessment_grades FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grades" ON public.assessment_grades FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
+CREATE POLICY "View student attendance" ON public.student_attendance FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage student attendance" ON public.student_attendance FOR ALL TO authenticated USING (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin()) WITH CHECK (has_any_role(ARRAY['Teacher']) OR is_hr_or_admin());
