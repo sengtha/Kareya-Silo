@@ -397,6 +397,99 @@ AS $function$
   SELECT id FROM employees WHERE user_id = auth.uid() LIMIT 1;
 $function$;
 
+-- ---------------------------------------------------------------------
+-- Attendance clock (server-authoritative).
+--
+-- Check-in/out MUST go through these RPCs, never a direct table write. They
+-- stamp the real server time, compute late/present from office policy + the
+-- employee's work type, and enforce one open record per day — so the client
+-- can no longer forge the time, status, or date. RLS blocks employees from
+-- inserting/updating attendance directly (see RLS.sql); corrections still flow
+-- through the document-request workflow (HR/Admin apply them).
+--
+-- Times are evaluated in office-local time. The timezone is currently fixed to
+-- Asia/Phnom_Penh (Cambodia); making it a per-silo setting is a follow-up.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.clock_in()
+ RETURNS public.attendance_records
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp    employees;
+  v_cfg    office_configs;
+  v_rec    attendance_records;
+  v_local  timestamp := (now() AT TIME ZONE 'Asia/Phnom_Penh');
+  v_today  date;
+  v_status text := 'present';
+  v_start  time;
+BEGIN
+  v_today := v_local::date;
+
+  SELECT * INTO v_emp FROM employees WHERE user_id = auth.uid() LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  -- One open record per day (idempotent against double taps / retries).
+  IF EXISTS (SELECT 1 FROM attendance_records
+             WHERE employee_id = v_emp.id AND date = v_today AND check_out IS NULL) THEN
+    RAISE EXCEPTION 'Already checked in today';
+  END IF;
+
+  SELECT * INTO v_cfg FROM office_configs LIMIT 1;
+
+  -- Flexible workers are always present; otherwise 'late' if past the office
+  -- start time plus a 15-minute grace period (office-local).
+  IF lower(coalesce(v_emp.work_type, 'fixed')) <> 'flexible'
+     AND coalesce(v_cfg.work_start_time, '') <> '' THEN
+    BEGIN
+      v_start := v_cfg.work_start_time::time;
+      IF v_local::time > (v_start + interval '15 minutes') THEN
+        v_status := 'late';
+      END IF;
+    EXCEPTION WHEN others THEN
+      v_status := 'present';  -- malformed config → do not penalise
+    END;
+  END IF;
+
+  INSERT INTO attendance_records (employee_id, date, check_in, status)
+  VALUES (v_emp.id, v_today, now(), v_status)
+  RETURNING * INTO v_rec;
+  RETURN v_rec;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.clock_in() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.clock_out()
+ RETURNS public.attendance_records
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp employees;
+  v_rec attendance_records;
+BEGIN
+  SELECT * INTO v_emp FROM employees WHERE user_id = auth.uid() LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  -- Close the caller's most recent open record (handles overnight shifts).
+  UPDATE attendance_records SET check_out = now()
+  WHERE id = (
+    SELECT id FROM attendance_records
+    WHERE employee_id = v_emp.id AND check_out IS NULL
+    ORDER BY check_in DESC LIMIT 1
+  )
+  RETURNING * INTO v_rec;
+
+  IF v_rec.id IS NULL THEN RAISE EXCEPTION 'No active check-in found'; END IF;
+  RETURN v_rec;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.clock_out() TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.is_employee()
  RETURNS boolean
  LANGUAGE sql

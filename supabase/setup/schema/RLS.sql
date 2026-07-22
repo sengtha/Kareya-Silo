@@ -58,8 +58,11 @@ CREATE POLICY "Manage roles" ON public.roles FOR ALL TO authenticated USING (is_
 
 -- ---- attendance --------------------------------------------------------
 CREATE POLICY "View attendance" ON public.attendance_records FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
-CREATE POLICY "Insert own attendance" ON public.attendance_records FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id());
-CREATE POLICY "Update attendance" ON public.attendance_records FOR UPDATE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+-- Employees do NOT insert/update attendance directly. Check-in/out go through
+-- the clock_in()/clock_out() SECURITY DEFINER RPCs (server time + computed
+-- status, one open record/day). Only HR/Admin may edit rows (corrections);
+-- everyone else files a correction via the document-request workflow.
+CREATE POLICY "Update attendance" ON public.attendance_records FOR UPDATE TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
 CREATE POLICY "Delete attendance" ON public.attendance_records FOR DELETE TO authenticated USING (is_hr_or_admin());
 
 -- ---- office config / holidays -----------------------------------------
