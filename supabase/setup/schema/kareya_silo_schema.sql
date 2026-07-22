@@ -503,3 +503,218 @@ CREATE TABLE public.market_announcements (
 );
 
 CREATE INDEX IF NOT EXISTS idx_candidates_job_id ON public.candidates (job_id);
+
+-- =====================================================================
+-- DOUBLE-ENTRY ACCOUNTING
+-- ---------------------------------------------------------------------
+-- A full double-entry general ledger: every transaction posts a balanced
+-- journal_entry (sum of debits == sum of credits) with journal_lines
+-- against accounts in the chart_of_accounts. Sales invoices, vendor
+-- bills, payments, and payroll auto-post; manual journals are supported.
+-- All amounts are in the business's single reporting currency.
+-- =====================================================================
+
+CREATE TABLE public.chart_of_accounts (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  code text NOT NULL,
+  name text NOT NULL,
+  type text NOT NULL,          -- asset | liability | equity | income | expense
+  subtype text,                -- e.g. bank, receivable, payable, tax, cogs
+  is_system boolean DEFAULT false,   -- seeded accounts the engine relies on
+  is_active boolean DEFAULT true,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT chart_of_accounts_pkey PRIMARY KEY (id),
+  CONSTRAINT chart_of_accounts_code_key UNIQUE (code),
+  CONSTRAINT chart_of_accounts_type_check CHECK (type = ANY (ARRAY['asset','liability','equity','income','expense']))
+);
+
+CREATE TABLE public.tax_rates (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  rate numeric NOT NULL DEFAULT 0,   -- percent, e.g. 10 for 10% VAT
+  is_default boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tax_rates_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.vendors (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  email text,
+  phone text,
+  address text,
+  tax_id text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vendors_pkey PRIMARY KEY (id)
+);
+
+-- Vendor bills (Accounts Payable)
+CREATE TABLE public.bills (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  vendor_id uuid,
+  bill_number text,
+  date date DEFAULT CURRENT_DATE,
+  due_date date,
+  category_account_id uuid,     -- expense account this bill hits
+  description text,
+  subtotal numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  amount numeric DEFAULT 0,      -- gross total
+  status text DEFAULT 'unpaid'::text,   -- unpaid | partial | paid
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT bills_pkey PRIMARY KEY (id),
+  CONSTRAINT bills_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES public.vendors(id) ON DELETE SET NULL,
+  CONSTRAINT bills_category_account_id_fkey FOREIGN KEY (category_account_id) REFERENCES public.chart_of_accounts(id) ON DELETE SET NULL,
+  CONSTRAINT bills_status_check CHECK (status = ANY (ARRAY['unpaid','partial','paid']))
+);
+
+-- Payments in (from clients) and out (to vendors / payroll)
+CREATE TABLE public.payments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  direction text NOT NULL,        -- in (received) | out (paid)
+  date date DEFAULT CURRENT_DATE,
+  amount numeric NOT NULL DEFAULT 0,
+  method text DEFAULT 'bank'::text,   -- cash | bank | card | other
+  deposit_account_id uuid,        -- cash/bank account money moves to/from
+  invoice_id uuid,                -- when settling a sales invoice
+  bill_id uuid,                   -- when settling a vendor bill
+  party_type text,                -- client | vendor | employee | other
+  party_id uuid,
+  reference text,
+  memo text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT payments_pkey PRIMARY KEY (id),
+  CONSTRAINT payments_direction_check CHECK (direction = ANY (ARRAY['in','out'])),
+  CONSTRAINT payments_deposit_account_id_fkey FOREIGN KEY (deposit_account_id) REFERENCES public.chart_of_accounts(id) ON DELETE SET NULL,
+  CONSTRAINT payments_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL,
+  CONSTRAINT payments_bill_id_fkey FOREIGN KEY (bill_id) REFERENCES public.bills(id) ON DELETE SET NULL
+);
+
+-- The general ledger: balanced journal entries + their lines
+CREATE TABLE public.journal_entries (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  date date DEFAULT CURRENT_DATE NOT NULL,
+  memo text,
+  reference text,
+  source_type text DEFAULT 'manual'::text,   -- manual | invoice | bill | payment | payroll
+  source_id uuid,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT journal_entries_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.journal_lines (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  entry_id uuid NOT NULL,
+  account_id uuid NOT NULL,
+  debit numeric DEFAULT 0,
+  credit numeric DEFAULT 0,
+  description text,
+  CONSTRAINT journal_lines_pkey PRIMARY KEY (id),
+  CONSTRAINT journal_lines_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES public.journal_entries(id) ON DELETE CASCADE,
+  CONSTRAINT journal_lines_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.chart_of_accounts(id) ON DELETE RESTRICT,
+  CONSTRAINT journal_lines_sign_check CHECK (debit >= 0 AND credit >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bills_vendor_id ON public.bills (vendor_id);
+CREATE INDEX IF NOT EXISTS idx_payments_invoice_id ON public.payments (invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payments_bill_id ON public.payments (bill_id);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_id ON public.journal_lines (entry_id);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_account_id ON public.journal_lines (account_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON public.journal_entries (date);
+
+-- ---------------------------------------------------------------------
+-- post_journal: atomically insert a balanced journal entry + lines.
+-- p_lines is a jsonb array of { account_id, debit, credit, description }.
+-- Rejects unbalanced entries. Returns the new entry id.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.post_journal(
+  p_date date,
+  p_memo text,
+  p_reference text,
+  p_source_type text,
+  p_source_id uuid,
+  p_lines jsonb
+)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_entry_id uuid;
+  v_debit numeric;
+  v_credit numeric;
+  v_line jsonb;
+BEGIN
+  SELECT COALESCE(SUM((l->>'debit')::numeric), 0), COALESCE(SUM((l->>'credit')::numeric), 0)
+    INTO v_debit, v_credit
+  FROM jsonb_array_elements(p_lines) AS l;
+
+  IF round(v_debit, 2) <> round(v_credit, 2) THEN
+    RAISE EXCEPTION 'Unbalanced journal: debits % <> credits %', v_debit, v_credit;
+  END IF;
+  IF v_debit = 0 THEN
+    RAISE EXCEPTION 'Journal entry has no amounts';
+  END IF;
+
+  INSERT INTO public.journal_entries (date, memo, reference, source_type, source_id, created_by)
+  VALUES (COALESCE(p_date, CURRENT_DATE), p_memo, p_reference, COALESCE(p_source_type, 'manual'), p_source_id, auth.uid())
+  RETURNING id INTO v_entry_id;
+
+  FOR v_line IN SELECT * FROM jsonb_array_elements(p_lines)
+  LOOP
+    INSERT INTO public.journal_lines (entry_id, account_id, debit, credit, description)
+    VALUES (
+      v_entry_id,
+      (v_line->>'account_id')::uuid,
+      COALESCE((v_line->>'debit')::numeric, 0),
+      COALESCE((v_line->>'credit')::numeric, 0),
+      v_line->>'description'
+    );
+  END LOOP;
+
+  RETURN v_entry_id;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.post_journal(date, text, text, text, uuid, jsonb) TO authenticated;
+
+-- ---------------------------------------------------------------------
+-- seed_chart_of_accounts: idempotently install a standard SME chart of
+-- accounts. Safe to call once after provisioning; skips if any exist.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.seed_chart_of_accounts()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF EXISTS (SELECT 1 FROM chart_of_accounts) THEN RETURN; END IF;
+  INSERT INTO chart_of_accounts (code, name, type, subtype, is_system) VALUES
+    ('1000', 'Cash', 'asset', 'cash', true),
+    ('1010', 'Bank', 'asset', 'bank', true),
+    ('1100', 'Accounts Receivable', 'asset', 'receivable', true),
+    ('1200', 'Inventory', 'asset', 'inventory', false),
+    ('2000', 'Accounts Payable', 'liability', 'payable', true),
+    ('2100', 'Tax Payable', 'liability', 'tax', true),
+    ('3000', 'Owner Equity', 'equity', 'equity', true),
+    ('3100', 'Retained Earnings', 'equity', 'retained', true),
+    ('4000', 'Sales Revenue', 'income', 'sales', true),
+    ('4100', 'Other Income', 'income', 'other', false),
+    ('5000', 'Cost of Goods Sold', 'expense', 'cogs', false),
+    ('5100', 'Salaries & Wages', 'expense', 'payroll', true),
+    ('5200', 'Rent', 'expense', 'operating', false),
+    ('5300', 'Utilities', 'expense', 'operating', false),
+    ('5400', 'Office Supplies', 'expense', 'operating', false),
+    ('5900', 'Other Expenses', 'expense', 'other', false);
+
+  INSERT INTO tax_rates (name, rate, is_default) VALUES ('VAT 10%', 10, true), ('Zero-rated', 0, false);
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.seed_chart_of_accounts() TO authenticated;

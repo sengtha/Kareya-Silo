@@ -139,3 +139,36 @@ CREATE POLICY "Manage candidates" ON public.candidates FOR ALL TO authenticated 
 
 CREATE POLICY "View announcements" ON public.market_announcements FOR SELECT TO authenticated USING (is_employee() OR is_public = true);
 CREATE POLICY "Manage announcements" ON public.market_announcements FOR ALL TO authenticated USING (has_any_role(ARRAY['Marketing'])) WITH CHECK (has_any_role(ARRAY['Marketing']));
+
+-- =====================================================================
+-- Double-entry accounting — sensitive; gated to Accountant/Admin/Founder.
+-- has_any_role(['Accountant']) returns true for Admin/Founder too.
+-- =====================================================================
+ALTER TABLE public.chart_of_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tax_rates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.journal_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.journal_lines ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View accounts" ON public.chart_of_accounts FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage accounts" ON public.chart_of_accounts FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View tax rates" ON public.tax_rates FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage tax rates" ON public.tax_rates FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View vendors" ON public.vendors FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage vendors" ON public.vendors FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View bills" ON public.bills FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage bills" ON public.bills FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View payments" ON public.payments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage payments" ON public.payments FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View journal" ON public.journal_entries FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage journal" ON public.journal_entries FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View journal lines" ON public.journal_lines FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage journal lines" ON public.journal_lines FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
