@@ -1337,3 +1337,46 @@ CREATE TABLE public.trips (
 CREATE INDEX IF NOT EXISTS idx_fuel_logs_vehicle_id ON public.fuel_logs (vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_records_vehicle_id ON public.maintenance_records (vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_trips_vehicle_id ON public.trips (vehicle_id);
+
+-- =====================================================================
+-- SALES ORDERS & FULFILLMENT (sell-side operational flow)
+-- Mirror of purchase orders: confirm -> fulfill (ship) reduces stock, and
+-- an order can be turned into an invoice. Complements quotes (financial).
+-- =====================================================================
+CREATE TABLE public.sales_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  so_number text NOT NULL,
+  client_id uuid,
+  status text DEFAULT 'draft'::text,     -- draft | confirmed | shipped | fulfilled | cancelled
+  order_date date DEFAULT CURRENT_DATE,
+  required_date date,
+  subtotal numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  notes text,
+  invoice_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT sales_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_orders_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE SET NULL,
+  CONSTRAINT sales_orders_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL,
+  CONSTRAINT sales_orders_status_check CHECK (status = ANY (ARRAY['draft','confirmed','shipped','fulfilled','cancelled']))
+);
+
+CREATE TABLE public.sales_order_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  so_id uuid,
+  description text NOT NULL,
+  quantity numeric DEFAULT 1,
+  price numeric DEFAULT 0,
+  shipped_qty numeric DEFAULT 0,
+  stock_item_id uuid,
+  CONSTRAINT sales_order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_order_items_so_id_fkey FOREIGN KEY (so_id) REFERENCES public.sales_orders(id) ON DELETE CASCADE,
+  CONSTRAINT sales_order_items_stock_item_id_fkey FOREIGN KEY (stock_item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_orders_client_id ON public.sales_orders (client_id);
+CREATE INDEX IF NOT EXISTS idx_sales_order_items_so_id ON public.sales_order_items (so_id);

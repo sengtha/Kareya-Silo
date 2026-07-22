@@ -318,3 +318,12 @@ CREATE POLICY "View maintenance" ON public.maintenance_records FOR SELECT TO aut
 CREATE POLICY "Manage maintenance" ON public.maintenance_records FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View trips" ON public.trips FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage trips" ON public.trips FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+
+-- ---- sales orders & fulfillment ---------------------------------------
+ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sales_order_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View sales orders" ON public.sales_orders FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage sales orders" ON public.sales_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Sales Lead','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Sales Lead','Accountant','Manager']));
+CREATE POLICY "View SO items" ON public.sales_order_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage SO items" ON public.sales_order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Sales Lead','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Sales Lead','Accountant','Manager']));
