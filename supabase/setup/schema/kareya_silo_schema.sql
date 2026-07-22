@@ -1260,3 +1260,80 @@ CREATE TABLE public.audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON public.audit_log (created_at);
+
+-- =====================================================================
+-- FLEET MANAGEMENT: vehicles, fuel, maintenance & trips
+-- Vehicles tie to an employee driver; fuel and maintenance track cost and
+-- odometer; trips log distance. Costs carry a currency for dual-currency ops.
+-- =====================================================================
+CREATE TABLE public.vehicles (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  plate text,
+  type text DEFAULT 'car'::text,          -- car | truck | motorcycle | van | other
+  make text,
+  model text,
+  year integer,
+  status text DEFAULT 'active'::text,     -- active | maintenance | retired
+  odometer numeric DEFAULT 0,
+  fuel_type text DEFAULT 'petrol'::text,  -- petrol | diesel | electric | hybrid
+  driver_id uuid,
+  purchase_date date,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vehicles_pkey PRIMARY KEY (id),
+  CONSTRAINT vehicles_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT vehicles_status_check CHECK (status = ANY (ARRAY['active','maintenance','retired']))
+);
+
+CREATE TABLE public.fuel_logs (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  vehicle_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  liters numeric DEFAULT 0,
+  cost numeric DEFAULT 0,
+  odometer numeric DEFAULT 0,
+  station text,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT fuel_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT fuel_logs_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.maintenance_records (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  vehicle_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  type text DEFAULT 'service'::text,      -- service | repair | inspection | tyre | other
+  description text,
+  cost numeric DEFAULT 0,
+  odometer numeric DEFAULT 0,
+  vendor text,
+  next_service_date date,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT maintenance_records_pkey PRIMARY KEY (id),
+  CONSTRAINT maintenance_records_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.trips (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  vehicle_id uuid,
+  driver_id uuid,
+  purpose text,
+  date date DEFAULT CURRENT_DATE,
+  start_odometer numeric DEFAULT 0,
+  end_odometer numeric DEFAULT 0,
+  distance numeric DEFAULT 0,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT trips_pkey PRIMARY KEY (id),
+  CONSTRAINT trips_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE CASCADE,
+  CONSTRAINT trips_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fuel_logs_vehicle_id ON public.fuel_logs (vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_vehicle_id ON public.maintenance_records (vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_trips_vehicle_id ON public.trips (vehicle_id);

@@ -303,3 +303,18 @@ ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Write audit" ON public.audit_log FOR INSERT TO authenticated WITH CHECK (is_employee());
 CREATE POLICY "View audit" ON public.audit_log FOR SELECT TO authenticated USING (is_admin_or_founder() OR has_any_role(ARRAY['Accountant']));
+
+-- ---- fleet management --------------------------------------------------
+ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fuel_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.maintenance_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.trips ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View vehicles" ON public.vehicles FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage vehicles" ON public.vehicles FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View fuel" ON public.fuel_logs FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage fuel" ON public.fuel_logs FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View maintenance" ON public.maintenance_records FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage maintenance" ON public.maintenance_records FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View trips" ON public.trips FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage trips" ON public.trips FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
