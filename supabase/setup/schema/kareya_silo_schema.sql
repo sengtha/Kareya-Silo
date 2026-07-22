@@ -2523,6 +2523,82 @@ CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items (order
 CREATE INDEX IF NOT EXISTS idx_order_items_status ON public.order_items (status);
 
 -- =====================================================================
+-- PHARMACY (drug catalog, batch/expiry stock, dispensing/POS)
+-- =====================================================================
+CREATE TABLE public.pharmacy_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  generic_name text,
+  form text DEFAULT 'tablet'::text,          -- tablet | capsule | syrup | injection | cream | drops | other
+  strength text,                             -- e.g. '500mg'
+  unit text DEFAULT 'unit'::text,            -- selling unit: box | strip | bottle | unit
+  category text,
+  barcode text,
+  requires_rx boolean DEFAULT false,         -- prescription-only medicine
+  reorder_level numeric DEFAULT 0,
+  sale_price numeric DEFAULT 0,
+  cost_price numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pharmacy_products_pkey PRIMARY KEY (id)
+);
+
+-- Stock is held per batch so expiry is tracked (FEFO dispensing).
+CREATE TABLE public.pharmacy_batches (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  product_id uuid NOT NULL,
+  batch_number text,
+  expiry_date date,
+  quantity numeric DEFAULT 0,
+  cost_price numeric DEFAULT 0,
+  supplier text,
+  received_date date DEFAULT CURRENT_DATE,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pharmacy_batches_pkey PRIMARY KEY (id),
+  CONSTRAINT pharmacy_batches_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.pharmacy_products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.pharmacy_sales (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sale_number text,
+  customer_name text,                        -- walk-in allowed (nullable)
+  prescriber text,                           -- prescribing clinician (for Rx items)
+  rx_reference text,
+  subtotal numeric DEFAULT 0,
+  discount numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  payment_method text DEFAULT 'cash'::text,  -- cash | card | qr | transfer
+  status text DEFAULT 'completed'::text,     -- completed | void
+  sold_by uuid,
+  currency text DEFAULT 'USD'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pharmacy_sales_pkey PRIMARY KEY (id),
+  CONSTRAINT pharmacy_sales_sold_by_fkey FOREIGN KEY (sold_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT pharmacy_sales_status_check CHECK (status = ANY (ARRAY['completed','void']))
+);
+
+CREATE TABLE public.pharmacy_sale_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sale_id uuid NOT NULL,
+  product_id uuid,
+  batch_id uuid,
+  description text,
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  line_total numeric DEFAULT 0,
+  CONSTRAINT pharmacy_sale_items_pkey PRIMARY KEY (id),
+  CONSTRAINT pharmacy_sale_items_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.pharmacy_sales(id) ON DELETE CASCADE,
+  CONSTRAINT pharmacy_sale_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.pharmacy_products(id) ON DELETE SET NULL,
+  CONSTRAINT pharmacy_sale_items_batch_id_fkey FOREIGN KEY (batch_id) REFERENCES public.pharmacy_batches(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pharmacy_batches_product_id ON public.pharmacy_batches (product_id);
+CREATE INDEX IF NOT EXISTS idx_pharmacy_batches_expiry ON public.pharmacy_batches (expiry_date);
+CREATE INDEX IF NOT EXISTS idx_pharmacy_sale_items_sale_id ON public.pharmacy_sale_items (sale_id);
+
+-- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
 -- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
 -- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —

@@ -539,6 +539,21 @@ CREATE POLICY "Manage restaurant orders" ON public.restaurant_orders FOR ALL TO 
 CREATE POLICY "View order items" ON public.order_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Accountant','Manager']));
 CREATE POLICY "Manage order items" ON public.order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager']));
 
+-- ---- pharmacy ----------------------------------------------------------
+ALTER TABLE public.pharmacy_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pharmacy_batches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pharmacy_sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pharmacy_sale_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View pharmacy products" ON public.pharmacy_products FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage pharmacy products" ON public.pharmacy_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Pharmacist','Manager'])) WITH CHECK (has_any_role(ARRAY['Pharmacist','Manager']));
+CREATE POLICY "View pharmacy batches" ON public.pharmacy_batches FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pharmacy batches" ON public.pharmacy_batches FOR ALL TO authenticated USING (has_any_role(ARRAY['Pharmacist','Manager'])) WITH CHECK (has_any_role(ARRAY['Pharmacist','Manager']));
+CREATE POLICY "View pharmacy sales" ON public.pharmacy_sales FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pharmacy sales" ON public.pharmacy_sales FOR ALL TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pharmacist','Cashier','Manager']));
+CREATE POLICY "View pharmacy sale items" ON public.pharmacy_sale_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pharmacy sale items" ON public.pharmacy_sale_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Pharmacist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pharmacist','Cashier','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which
