@@ -308,6 +308,20 @@ CREATE POLICY "View bom items" ON public.bom_items FOR SELECT TO authenticated U
 CREATE POLICY "Manage bom items" ON public.bom_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View work orders" ON public.work_orders FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage work orders" ON public.work_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+-- workstations & routing are configured by Manager/Accountant; all employees
+-- may read. Shop-floor operation instances can be advanced by any employee
+-- (the operator on the floor) but are seeded/removed by Manager/Accountant.
+ALTER TABLE public.workstations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bom_operations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.work_order_operations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View workstations" ON public.workstations FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage workstations" ON public.workstations FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View bom operations" ON public.bom_operations FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage bom operations" ON public.bom_operations FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View wo operations" ON public.work_order_operations FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Advance wo operations" ON public.work_order_operations FOR UPDATE TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "Manage wo operations" ON public.work_order_operations FOR INSERT TO authenticated WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "Delete wo operations" ON public.work_order_operations FOR DELETE TO authenticated USING (has_any_role(ARRAY['Manager','Accountant']));
 
 -- ---- point of sale ----------------------------------------------------
 ALTER TABLE public.pos_sales ENABLE ROW LEVEL SECURITY;

@@ -1440,6 +1440,64 @@ CREATE TABLE public.work_orders (
 CREATE INDEX IF NOT EXISTS idx_bom_items_bom_id ON public.bom_items (bom_id);
 CREATE INDEX IF NOT EXISTS idx_work_orders_bom_id ON public.work_orders (bom_id);
 
+-- ---------------------------------------------------------------------
+-- MANUFACTURING (deep): workstations, routing operations, shop-floor ops
+-- A workstation is a machine/bench with an hourly cost rate and a daily
+-- capacity. A BOM's routing is an ordered list of operations, each run at a
+-- workstation for a per-unit time. When a work order is created it copies the
+-- routing into work_order_operations, which the shop floor advances and logs
+-- actual time against. On completion the finished item's cost_price is rolled
+-- up from component cost + operation labour cost.
+-- ---------------------------------------------------------------------
+CREATE TABLE public.workstations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  code text,
+  hourly_rate numeric DEFAULT 0,             -- labour + overhead cost per hour
+  capacity_min_per_day numeric DEFAULT 480,  -- available minutes / day (8h default)
+  is_active boolean DEFAULT true,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT workstations_pkey PRIMARY KEY (id)
+);
+
+-- Routing template attached to a BOM.
+CREATE TABLE public.bom_operations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  bom_id uuid NOT NULL,
+  seq integer DEFAULT 1,
+  name text NOT NULL,                        -- e.g. 'Cut', 'Assemble', 'QC'
+  workstation_id uuid,
+  minutes_per_unit numeric DEFAULT 0,
+  notes text,
+  CONSTRAINT bom_operations_pkey PRIMARY KEY (id),
+  CONSTRAINT bom_operations_bom_id_fkey FOREIGN KEY (bom_id) REFERENCES public.bills_of_materials(id) ON DELETE CASCADE,
+  CONSTRAINT bom_operations_workstation_id_fkey FOREIGN KEY (workstation_id) REFERENCES public.workstations(id) ON DELETE SET NULL
+);
+
+-- Per-work-order operation instances (the shop-floor schedule).
+CREATE TABLE public.work_order_operations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  work_order_id uuid NOT NULL,
+  seq integer DEFAULT 1,
+  name text NOT NULL,
+  workstation_id uuid,
+  status text DEFAULT 'pending'::text,       -- pending | in_progress | done
+  planned_minutes numeric DEFAULT 0,         -- minutes_per_unit * wo.quantity
+  actual_minutes numeric DEFAULT 0,
+  scheduled_date date,
+  operator_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT work_order_operations_pkey PRIMARY KEY (id),
+  CONSTRAINT wo_operations_work_order_id_fkey FOREIGN KEY (work_order_id) REFERENCES public.work_orders(id) ON DELETE CASCADE,
+  CONSTRAINT wo_operations_workstation_id_fkey FOREIGN KEY (workstation_id) REFERENCES public.workstations(id) ON DELETE SET NULL,
+  CONSTRAINT wo_operations_operator_id_fkey FOREIGN KEY (operator_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT wo_operations_status_check CHECK (status = ANY (ARRAY['pending','in_progress','done']))
+);
+CREATE INDEX IF NOT EXISTS idx_bom_operations_bom_id ON public.bom_operations (bom_id);
+CREATE INDEX IF NOT EXISTS idx_wo_operations_work_order_id ON public.work_order_operations (work_order_id);
+CREATE INDEX IF NOT EXISTS idx_wo_operations_scheduled ON public.work_order_operations (scheduled_date);
+
 -- =====================================================================
 -- POINT OF SALE (POS): fast retail checkout
 -- Each sale reduces stock and posts to the ledger (DR cash/bank, CR sales,
