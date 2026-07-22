@@ -1217,3 +1217,29 @@ CREATE TABLE public.work_orders (
 
 CREATE INDEX IF NOT EXISTS idx_bom_items_bom_id ON public.bom_items (bom_id);
 CREATE INDEX IF NOT EXISTS idx_work_orders_bom_id ON public.work_orders (bom_id);
+
+-- =====================================================================
+-- POINT OF SALE (POS): fast retail checkout
+-- Each sale reduces stock and posts to the ledger (DR cash/bank, CR sales,
+-- CR tax). Sold lines snapshot description/qty/price as JSON.
+-- =====================================================================
+CREATE TABLE public.pos_sales (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sale_number text NOT NULL,
+  cashier_id uuid,
+  items jsonb DEFAULT '[]'::jsonb,        -- [{stockItemId, description, quantity, price}]
+  subtotal numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  payment_method text DEFAULT 'cash',     -- cash | card | bank
+  tendered numeric DEFAULT 0,
+  change_given numeric DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pos_sales_pkey PRIMARY KEY (id),
+  CONSTRAINT pos_sales_cashier_id_fkey FOREIGN KEY (cashier_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_sales_created_at ON public.pos_sales (created_at);

@@ -290,3 +290,10 @@ CREATE POLICY "View bom items" ON public.bom_items FOR SELECT TO authenticated U
 CREATE POLICY "Manage bom items" ON public.bom_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View work orders" ON public.work_orders FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage work orders" ON public.work_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+
+-- ---- point of sale ----------------------------------------------------
+ALTER TABLE public.pos_sales ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View pos sales" ON public.pos_sales FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Create pos sales" ON public.pos_sales FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "Manage pos sales" ON public.pos_sales FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
