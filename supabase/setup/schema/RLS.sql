@@ -297,3 +297,9 @@ ALTER TABLE public.pos_sales ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "View pos sales" ON public.pos_sales FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Create pos sales" ON public.pos_sales FOR INSERT TO authenticated WITH CHECK (is_employee());
 CREATE POLICY "Manage pos sales" ON public.pos_sales FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+
+-- ---- audit log (append-only; admins read) -----------------------------
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Write audit" ON public.audit_log FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "View audit" ON public.audit_log FOR SELECT TO authenticated USING (is_admin_or_founder() OR has_any_role(ARRAY['Accountant']));

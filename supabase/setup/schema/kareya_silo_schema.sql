@@ -1243,3 +1243,20 @@ CREATE TABLE public.pos_sales (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pos_sales_created_at ON public.pos_sales (created_at);
+
+-- =====================================================================
+-- AUDIT LOG (sovereign trust): immutable trail of sensitive actions
+-- =====================================================================
+CREATE TABLE public.audit_log (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  actor_id uuid,
+  actor_name text,
+  action text NOT NULL,                  -- e.g. 'payment.record', 'po.receive'
+  entity text,                           -- e.g. 'invoice', 'purchase_order'
+  entity_id text,
+  detail text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON public.audit_log (created_at);
