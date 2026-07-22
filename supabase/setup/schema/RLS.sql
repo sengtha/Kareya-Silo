@@ -184,3 +184,17 @@ CREATE POLICY "View leave requests" ON public.leave_requests FOR SELECT TO authe
 CREATE POLICY "Create own leave request" ON public.leave_requests FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id());
 CREATE POLICY "Update leave requests" ON public.leave_requests FOR UPDATE TO authenticated USING (is_hr_or_admin() OR employee_id = current_employee_id());
 CREATE POLICY "Delete own leave request" ON public.leave_requests FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+
+-- ---- HR: payslips / performance / documents ---------------------------
+ALTER TABLE public.payslips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.performance_reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.employee_documents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View payslips" ON public.payslips FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Accountant','HR']));
+CREATE POLICY "Manage payslips" ON public.payslips FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+CREATE POLICY "View reviews" ON public.performance_reviews FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Manage reviews" ON public.performance_reviews FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+
+CREATE POLICY "View emp documents" ON public.employee_documents FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Manage emp documents" ON public.employee_documents FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());

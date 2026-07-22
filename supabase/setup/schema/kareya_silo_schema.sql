@@ -776,3 +776,60 @@ END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.seed_leave_types() TO authenticated;
+
+-- =====================================================================
+-- HR: payslips, performance reviews, employee documents
+-- =====================================================================
+CREATE TABLE public.payslips (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  employee_id uuid,
+  period text NOT NULL,                 -- 'YYYY-MM'
+  pay_date date DEFAULT CURRENT_DATE,
+  base_salary numeric DEFAULT 0,
+  allowances numeric DEFAULT 0,
+  gross numeric DEFAULT 0,
+  tax numeric DEFAULT 0,
+  other_deductions numeric DEFAULT 0,
+  net numeric DEFAULT 0,
+  status text DEFAULT 'draft'::text,    -- draft | paid
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT payslips_pkey PRIMARY KEY (id),
+  CONSTRAINT payslips_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE,
+  CONSTRAINT payslips_status_check CHECK (status = ANY (ARRAY['draft','paid']))
+);
+
+CREATE TABLE public.performance_reviews (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  employee_id uuid,
+  reviewer_id uuid,
+  period text,
+  review_date date DEFAULT CURRENT_DATE,
+  rating integer DEFAULT 3,             -- 1..5
+  strengths text,
+  improvements text,
+  goals text,
+  status text DEFAULT 'draft'::text,    -- draft | finalized
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT performance_reviews_pkey PRIMARY KEY (id),
+  CONSTRAINT performance_reviews_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE,
+  CONSTRAINT performance_reviews_reviewer_id_fkey FOREIGN KEY (reviewer_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT performance_reviews_rating_check CHECK (rating BETWEEN 1 AND 5)
+);
+
+CREATE TABLE public.employee_documents (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  employee_id uuid,
+  name text NOT NULL,
+  type text DEFAULT 'contract'::text,   -- contract | id | certificate | other
+  file_url text,
+  issue_date date,
+  expiry_date date,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT employee_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_documents_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_payslips_employee_id ON public.payslips (employee_id);
+CREATE INDEX IF NOT EXISTS idx_performance_reviews_employee_id ON public.performance_reviews (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_documents_employee_id ON public.employee_documents (employee_id);
