@@ -535,3 +535,39 @@ CREATE POLICY "View restaurant orders" ON public.restaurant_orders FOR SELECT TO
 CREATE POLICY "Manage restaurant orders" ON public.restaurant_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager']));
 CREATE POLICY "View order items" ON public.order_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Accountant','Manager']));
 CREATE POLICY "Manage order items" ON public.order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager']));
+
+-- =====================================================================
+-- AI ASSISTANT + RAG
+-- ai_config: every employee may READ (to know if the assistant is on, which
+-- provider/model) — the key columns are opaque vault uuids, not usable secrets.
+-- Only the owner (Admin/Founder) may change settings; keys are set exclusively
+-- through ai_set_secret()/ai_clear_secret(), never by writing the column.
+-- =====================================================================
+ALTER TABLE public.ai_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.kb_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.kb_chunks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View ai config" ON public.ai_config FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Owner manages ai config" ON public.ai_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+
+-- Knowledge base: all employees can read; Support/Manager (and owners) curate.
+-- Ingestion normally runs via the edge function (service role), which bypasses RLS.
+CREATE POLICY "View kb documents" ON public.kb_documents FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage kb documents" ON public.kb_documents FOR ALL TO authenticated USING (has_any_role(ARRAY['Support','Manager'])) WITH CHECK (has_any_role(ARRAY['Support','Manager']));
+CREATE POLICY "View kb chunks" ON public.kb_chunks FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage kb chunks" ON public.kb_chunks FOR ALL TO authenticated USING (has_any_role(ARRAY['Support','Manager'])) WITH CHECK (has_any_role(ARRAY['Support','Manager']));
+
+-- =====================================================================
+-- STORAGE — per-silo media. Objects are readable/writable only by employees
+-- of this silo. 'kb-sources' holds AI source documents (owner-curated);
+-- 'silo-media' is the general media bucket (rename to your bucket if different).
+-- =====================================================================
+CREATE POLICY "Employees read kb-sources" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'kb-sources' AND is_employee());
+CREATE POLICY "Owners/curators write kb-sources" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
+CREATE POLICY "Owners/curators update kb-sources" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
+CREATE POLICY "Owners/curators delete kb-sources" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
+
+CREATE POLICY "Employees read silo-media" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'silo-media' AND is_employee());
+CREATE POLICY "Employees write silo-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'silo-media' AND is_employee());
+CREATE POLICY "Employees update silo-media" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) WITH CHECK (bucket_id = 'silo-media' AND is_employee());
+CREATE POLICY "Employees delete silo-media" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'silo-media' AND is_employee());

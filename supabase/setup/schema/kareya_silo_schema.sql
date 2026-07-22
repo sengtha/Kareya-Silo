@@ -2425,3 +2425,160 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_orders_table_id ON public.restaurant_o
 CREATE INDEX IF NOT EXISTS idx_restaurant_orders_status ON public.restaurant_orders (status);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items (order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_status ON public.order_items (status);
+
+-- =====================================================================
+-- AI ASSISTANT + RAG  (per-silo, owner-configured)
+-- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
+-- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —
+-- they live in Supabase Vault and are referenced by uuid. RAG embeddings are
+-- ALWAYS produced by Gemini (Anthropic has no embeddings API, and a vector
+-- store must use one embedding model), so a Gemini key is required for RAG
+-- regardless of the chosen chat provider. All AI compute runs in the silo's
+-- own edge functions; nothing lives at the Hub.
+-- =====================================================================
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS supabase_vault;
+
+-- Singleton configuration row (id is always true).
+CREATE TABLE public.ai_config (
+  id boolean NOT NULL DEFAULT true,
+  enabled boolean DEFAULT false,               -- chat assistant on/off
+  rag_enabled boolean DEFAULT false,           -- knowledge retrieval on/off
+  chat_provider text DEFAULT 'claude',         -- claude | openai | gemini
+  chat_model text,                             -- e.g. claude-opus-4-8 / gpt-4o / gemini-3-flash
+  system_prompt text,
+  temperature numeric DEFAULT 0.4,
+  chat_key_id uuid,                            -- vault secret id (chat provider key)
+  embedding_key_id uuid,                       -- vault secret id (Gemini key for RAG)
+  embedding_model text DEFAULT 'text-embedding-004',  -- Gemini, 768-dim
+  updated_by uuid,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT ai_config_pkey PRIMARY KEY (id),
+  CONSTRAINT ai_config_singleton CHECK (id = true),
+  CONSTRAINT ai_config_provider_check CHECK (chat_provider = ANY (ARRAY['claude','openai','gemini']))
+);
+
+-- Owner-only secret management. Raw keys go straight into Vault; only the
+-- opaque secret uuid is stored on ai_config. p_kind is 'chat' or 'embedding'.
+CREATE OR REPLACE FUNCTION public.ai_set_secret(p_kind text, p_value text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_id uuid;
+BEGIN
+  IF NOT is_admin_or_founder() THEN RAISE EXCEPTION 'Only the workspace owner can configure AI'; END IF;
+  IF p_value IS NULL OR length(trim(p_value)) = 0 THEN RAISE EXCEPTION 'Key value required'; END IF;
+  INSERT INTO ai_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+
+  IF p_kind = 'chat' THEN
+    SELECT chat_key_id INTO v_id FROM ai_config WHERE id;
+    IF v_id IS NULL THEN
+      v_id := vault.create_secret(p_value, 'ai_chat_key', 'Silo AI chat provider key');
+      UPDATE ai_config SET chat_key_id = v_id, updated_by = current_employee_id(), updated_at = now() WHERE id;
+    ELSE
+      PERFORM vault.update_secret(v_id, p_value);
+      UPDATE ai_config SET updated_by = current_employee_id(), updated_at = now() WHERE id;
+    END IF;
+  ELSIF p_kind = 'embedding' THEN
+    SELECT embedding_key_id INTO v_id FROM ai_config WHERE id;
+    IF v_id IS NULL THEN
+      v_id := vault.create_secret(p_value, 'ai_embedding_key', 'Silo Gemini embedding key');
+      UPDATE ai_config SET embedding_key_id = v_id, updated_by = current_employee_id(), updated_at = now() WHERE id;
+    ELSE
+      PERFORM vault.update_secret(v_id, p_value);
+      UPDATE ai_config SET updated_by = current_employee_id(), updated_at = now() WHERE id;
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Unknown secret kind: %', p_kind;
+  END IF;
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.ai_set_secret(text, text) TO authenticated;
+
+-- Owner-only: clear a key (removes the vault secret and the reference).
+CREATE OR REPLACE FUNCTION public.ai_clear_secret(p_kind text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_id uuid;
+BEGIN
+  IF NOT is_admin_or_founder() THEN RAISE EXCEPTION 'Only the workspace owner can configure AI'; END IF;
+  IF p_kind = 'chat' THEN
+    SELECT chat_key_id INTO v_id FROM ai_config WHERE id;
+    UPDATE ai_config SET chat_key_id = NULL, updated_by = current_employee_id(), updated_at = now() WHERE id;
+  ELSIF p_kind = 'embedding' THEN
+    SELECT embedding_key_id INTO v_id FROM ai_config WHERE id;
+    UPDATE ai_config SET embedding_key_id = NULL, updated_by = current_employee_id(), updated_at = now() WHERE id;
+  ELSE
+    RAISE EXCEPTION 'Unknown secret kind: %', p_kind;
+  END IF;
+  IF v_id IS NOT NULL THEN DELETE FROM vault.secrets WHERE id = v_id; END IF;
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.ai_clear_secret(text) TO authenticated;
+
+-- ---- Knowledge base (RAG) ----
+-- Source documents (articles, the user manual, or files uploaded to Storage).
+CREATE TABLE public.kb_documents (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text,
+  source_type text DEFAULT 'article'::text,    -- article | manual | file | note
+  source_ref text,                             -- storage object path, or source row id
+  mime_type text,
+  status text DEFAULT 'pending'::text,         -- pending | processing | indexed | failed
+  chunk_count integer DEFAULT 0,
+  error text,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  indexed_at timestamp with time zone,
+  CONSTRAINT kb_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT kb_documents_status_check CHECK (status = ANY (ARRAY['pending','processing','indexed','failed']))
+);
+
+-- Embedded chunks. vector(768) matches Gemini text-embedding-004.
+CREATE TABLE public.kb_chunks (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  document_id uuid,
+  chunk_index integer DEFAULT 0,
+  content text NOT NULL,
+  token_count integer,
+  embedding vector(768),
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT kb_chunks_pkey PRIMARY KEY (id),
+  CONSTRAINT kb_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.kb_documents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_document_id ON public.kb_chunks (document_id);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_embedding ON public.kb_chunks USING hnsw (embedding vector_cosine_ops);
+
+-- Similarity search, gated by is_employee(). Called by the ai-chat edge
+-- function (which passes the caller's identity) to retrieve context.
+CREATE OR REPLACE FUNCTION public.match_kb_chunks(query_embedding vector(768), match_count integer DEFAULT 6, min_similarity double precision DEFAULT 0.5)
+ RETURNS TABLE(id uuid, document_id uuid, title text, content text, similarity double precision)
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  SELECT c.id, c.document_id, d.title, c.content,
+         1 - (c.embedding <=> query_embedding) AS similarity
+  FROM kb_chunks c
+  JOIN kb_documents d ON d.id = c.document_id
+  WHERE is_employee()
+    AND c.embedding IS NOT NULL
+    AND 1 - (c.embedding <=> query_embedding) >= min_similarity
+  ORDER BY c.embedding <=> query_embedding
+  LIMIT match_count;
+$function$;
+GRANT EXECUTE ON FUNCTION public.match_kb_chunks(vector, integer, double precision) TO authenticated;
+
+-- Private bucket for documents the owner feeds the assistant. Existing media
+-- buckets can also be ingested; this one is dedicated to AI source material.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('kb-sources', 'kb-sources', false)
+ON CONFLICT (id) DO NOTHING;
