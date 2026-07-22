@@ -589,6 +589,24 @@ CREATE POLICY "Manage loan schedule" ON public.loan_schedule FOR ALL TO authenti
 CREATE POLICY "View loan repayments" ON public.loan_repayments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
 CREATE POLICY "Manage loan repayments" ON public.loan_repayments FOR ALL TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
 
+-- ---- property / rental -------------------------------------------------
+ALTER TABLE public.rental_units ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rental_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rental_payments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View rental units" ON public.rental_units FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "Manage rental units" ON public.rental_units FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Manager']));
+CREATE POLICY "View tenants" ON public.tenants FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "Manage tenants" ON public.tenants FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Manager']));
+CREATE POLICY "View leases" ON public.leases FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "Manage leases" ON public.leases FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Manager']));
+CREATE POLICY "View rental invoices" ON public.rental_invoices FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "Manage rental invoices" ON public.rental_invoices FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "View rental payments" ON public.rental_payments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+CREATE POLICY "Manage rental payments" ON public.rental_payments FOR ALL TO authenticated USING (has_any_role(ARRAY['Property Manager','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Property Manager','Accountant','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which

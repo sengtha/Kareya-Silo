@@ -2762,6 +2762,95 @@ CREATE INDEX IF NOT EXISTS idx_loan_schedule_loan_id ON public.loan_schedule (lo
 CREATE INDEX IF NOT EXISTS idx_loan_repayments_loan_id ON public.loan_repayments (loan_id);
 
 -- =====================================================================
+-- PROPERTY / RENTAL MANAGEMENT (units, tenants, leases, rent billing)
+-- =====================================================================
+CREATE TABLE public.rental_units (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'Apt 2B'
+  building text,                             -- building / property name
+  type text DEFAULT 'apartment'::text,       -- apartment | house | room | shop | office | land
+  address text,
+  bedrooms integer DEFAULT 0,
+  bathrooms integer DEFAULT 0,
+  size_sqm numeric,
+  rent_amount numeric DEFAULT 0,
+  deposit_amount numeric DEFAULT 0,
+  currency text DEFAULT 'USD'::text,
+  status text DEFAULT 'available'::text,     -- available | occupied | maintenance
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT rental_units_pkey PRIMARY KEY (id),
+  CONSTRAINT rental_units_status_check CHECK (status = ANY (ARRAY['available','occupied','maintenance']))
+);
+
+CREATE TABLE public.tenants (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  phone text,
+  email text,
+  national_id text,
+  address text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tenants_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.leases (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  lease_number text,
+  unit_id uuid,
+  tenant_id uuid,
+  start_date date,
+  end_date date,
+  rent_amount numeric DEFAULT 0,
+  deposit_amount numeric DEFAULT 0,
+  billing_day integer DEFAULT 1,             -- day of month rent is due
+  currency text DEFAULT 'USD'::text,
+  status text DEFAULT 'active'::text,        -- active | ended | terminated
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT leases_pkey PRIMARY KEY (id),
+  CONSTRAINT leases_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.rental_units(id) ON DELETE SET NULL,
+  CONSTRAINT leases_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id) ON DELETE SET NULL,
+  CONSTRAINT leases_status_check CHECK (status = ANY (ARRAY['active','ended','terminated']))
+);
+
+CREATE TABLE public.rental_invoices (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  invoice_number text,
+  lease_id uuid,
+  period_month text,                         -- 'YYYY-MM'
+  due_date date,
+  amount numeric DEFAULT 0,
+  amount_paid numeric DEFAULT 0,
+  status text DEFAULT 'unpaid'::text,        -- unpaid | partial | paid
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT rental_invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT rental_invoices_lease_id_fkey FOREIGN KEY (lease_id) REFERENCES public.leases(id) ON DELETE CASCADE,
+  CONSTRAINT rental_invoices_status_check CHECK (status = ANY (ARRAY['unpaid','partial','paid']))
+);
+
+CREATE TABLE public.rental_payments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  invoice_id uuid,
+  lease_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  amount numeric DEFAULT 0,
+  method text DEFAULT 'cash'::text,
+  received_by uuid,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT rental_payments_pkey PRIMARY KEY (id),
+  CONSTRAINT rental_payments_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.rental_invoices(id) ON DELETE SET NULL,
+  CONSTRAINT rental_payments_lease_id_fkey FOREIGN KEY (lease_id) REFERENCES public.leases(id) ON DELETE CASCADE,
+  CONSTRAINT rental_payments_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_leases_unit_id ON public.leases (unit_id);
+CREATE INDEX IF NOT EXISTS idx_rental_invoices_lease_id ON public.rental_invoices (lease_id);
+CREATE INDEX IF NOT EXISTS idx_rental_payments_invoice_id ON public.rental_payments (invoice_id);
+
+-- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
 -- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
 -- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —
