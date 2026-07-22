@@ -833,3 +833,41 @@ CREATE TABLE public.employee_documents (
 CREATE INDEX IF NOT EXISTS idx_payslips_employee_id ON public.payslips (employee_id);
 CREATE INDEX IF NOT EXISTS idx_performance_reviews_employee_id ON public.performance_reviews (employee_id);
 CREATE INDEX IF NOT EXISTS idx_employee_documents_employee_id ON public.employee_documents (employee_id);
+
+-- =====================================================================
+-- SALES: quotes / estimates (convert to invoices)
+-- =====================================================================
+CREATE TABLE public.quotes (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  quote_number text NOT NULL,
+  client_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  valid_until date,
+  tax_rate numeric DEFAULT 0,
+  discount numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  status text DEFAULT 'draft'::text,   -- draft | sent | accepted | declined | expired | invoiced
+  notes text,
+  invoice_id uuid,
+  owner_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT quotes_pkey PRIMARY KEY (id),
+  CONSTRAINT quotes_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE SET NULL,
+  CONSTRAINT quotes_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL,
+  CONSTRAINT quotes_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT quotes_status_check CHECK (status = ANY (ARRAY['draft','sent','accepted','declined','expired','invoiced']))
+);
+
+CREATE TABLE public.quote_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  quote_id uuid,
+  description text NOT NULL,
+  quantity numeric DEFAULT 1,
+  price numeric DEFAULT 0,
+  product_id uuid,
+  CONSTRAINT quote_items_pkey PRIMARY KEY (id),
+  CONSTRAINT quote_items_quote_id_fkey FOREIGN KEY (quote_id) REFERENCES public.quotes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_quotes_client_id ON public.quotes (client_id);
+CREATE INDEX IF NOT EXISTS idx_quote_items_quote_id ON public.quote_items (quote_id);

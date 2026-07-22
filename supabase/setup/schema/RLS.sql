@@ -198,3 +198,12 @@ CREATE POLICY "Manage reviews" ON public.performance_reviews FOR ALL TO authenti
 
 CREATE POLICY "View emp documents" ON public.employee_documents FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
 CREATE POLICY "Manage emp documents" ON public.employee_documents FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+
+-- ---- sales: quotes -----------------------------------------------------
+ALTER TABLE public.quotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quote_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View quotes" ON public.quotes FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage quotes" ON public.quotes FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View quote items" ON public.quote_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage quote items" ON public.quote_items FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
