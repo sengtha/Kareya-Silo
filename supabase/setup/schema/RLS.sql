@@ -642,6 +642,19 @@ ALTER TABLE public.deliveries ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "View deliveries" ON public.deliveries FOR SELECT TO authenticated USING (has_any_role(ARRAY['Dispatcher','Driver','Accountant','Manager']));
 CREATE POLICY "Manage deliveries" ON public.deliveries FOR ALL TO authenticated USING (has_any_role(ARRAY['Dispatcher','Driver','Manager'])) WITH CHECK (has_any_role(ARRAY['Dispatcher','Driver','Manager']));
 
+-- ---- pawn shop ----------------------------------------------------------
+-- Pawnbrokers/Cashiers run the counter; Managers oversee; Accountants may view
+-- for reconciliation (loan disbursements/redemptions hit the ledger).
+ALTER TABLE public.pawn_tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pawn_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pawn_transactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View pawn tickets" ON public.pawn_tickets FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pawn tickets" ON public.pawn_tickets FOR ALL TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pawnbroker','Cashier','Manager']));
+CREATE POLICY "View pawn items" ON public.pawn_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pawn items" ON public.pawn_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pawnbroker','Cashier','Manager']));
+CREATE POLICY "View pawn transactions" ON public.pawn_transactions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage pawn transactions" ON public.pawn_transactions FOR ALL TO authenticated USING (has_any_role(ARRAY['Pawnbroker','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Pawnbroker','Cashier','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which

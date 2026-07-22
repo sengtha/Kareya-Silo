@@ -917,6 +917,8 @@ BEGIN
     ('1100', 'Accounts Receivable', 'asset', 'receivable', true),
     ('1200', 'Inventory', 'asset', 'inventory', false),
     ('1300', 'Loans Receivable', 'asset', 'receivable', false),
+    ('1310', 'Pawn Loans Receivable', 'asset', 'receivable', false),
+    ('1210', 'Forfeited Collateral', 'asset', 'inventory', false),
     ('1500', 'Accumulated Depreciation', 'asset', 'contra', false),
     ('2000', 'Accounts Payable', 'liability', 'payable', true),
     ('2100', 'Tax Payable', 'liability', 'tax', true),
@@ -3004,6 +3006,79 @@ CREATE TABLE public.deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON public.deliveries (status);
 CREATE INDEX IF NOT EXISTS idx_deliveries_driver_id ON public.deliveries (driver_id);
+
+-- =====================================================================
+-- PAWN SHOP (collateral-backed lending — tickets, items, redemption,
+-- renewal, forfeiture). Unlike Microfinance, a pawn loan is SECURED by a
+-- physical item the shop holds in custody; on default the item is forfeited
+-- and becomes shop inventory for resale. Interest is a flat MONTHLY rate.
+-- =====================================================================
+CREATE TABLE public.pawn_tickets (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  ticket_number text,                        -- human-facing pawn ticket no.
+  customer_name text NOT NULL,
+  customer_phone text,
+  customer_id_number text,                   -- national ID / passport
+  customer_address text,
+  pawn_date date DEFAULT CURRENT_DATE,
+  due_date date,                             -- redeem-by date
+  principal numeric DEFAULT 0,               -- cash loaned to the customer
+  interest_rate numeric DEFAULT 0,           -- MONTHLY %, e.g. 3
+  appraised_value numeric DEFAULT 0,         -- total appraised worth of collateral
+  grace_days integer DEFAULT 0,              -- days past due before forfeiture allowed
+  officer_id uuid,                           -- employee who wrote the ticket
+  status text DEFAULT 'active'::text,        -- active | redeemed | forfeited | sold
+  redeemed_date date,
+  forfeited_date date,
+  currency text DEFAULT 'USD'::text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pawn_tickets_pkey PRIMARY KEY (id),
+  CONSTRAINT pawn_tickets_officer_id_fkey FOREIGN KEY (officer_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT pawn_tickets_status_check CHECK (status = ANY (ARRAY['active','redeemed','forfeited','sold']))
+);
+
+CREATE TABLE public.pawn_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  ticket_id uuid NOT NULL,
+  description text NOT NULL,                  -- e.g. '22K gold necklace, 15g'
+  category text DEFAULT 'other'::text,       -- jewelry | electronics | vehicle | watch | tool | other
+  condition text,                            -- appraiser's condition note
+  serial_no text,                            -- serial / IMEI / plate for traceability
+  weight_grams numeric,                       -- for precious metals
+  appraised_value numeric DEFAULT 0,
+  photo_url text,
+  status text DEFAULT 'in_custody'::text,    -- in_custody | returned | forfeited | sold
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pawn_items_pkey PRIMARY KEY (id),
+  CONSTRAINT pawn_items_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.pawn_tickets(id) ON DELETE CASCADE,
+  CONSTRAINT pawn_items_category_check CHECK (category = ANY (ARRAY['jewelry','electronics','vehicle','watch','tool','other'])),
+  CONSTRAINT pawn_items_status_check CHECK (status = ANY (ARRAY['in_custody','returned','forfeited','sold']))
+);
+
+-- Every money event on a ticket: interest-only payment, renewal (extends the
+-- due date), full redemption (principal + interest, items returned), or the
+-- proceeds when a forfeited item is later sold.
+CREATE TABLE public.pawn_transactions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  ticket_id uuid NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  type text DEFAULT 'interest'::text,        -- interest | renewal | redemption | forfeiture | sale
+  amount numeric DEFAULT 0,                  -- total cash moved
+  principal_portion numeric DEFAULT 0,
+  interest_portion numeric DEFAULT 0,
+  new_due_date date,                         -- set on renewal
+  received_by uuid,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT pawn_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT pawn_transactions_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.pawn_tickets(id) ON DELETE CASCADE,
+  CONSTRAINT pawn_transactions_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT pawn_transactions_type_check CHECK (type = ANY (ARRAY['interest','renewal','redemption','forfeiture','sale']))
+);
+CREATE INDEX IF NOT EXISTS idx_pawn_items_ticket_id ON public.pawn_items (ticket_id);
+CREATE INDEX IF NOT EXISTS idx_pawn_transactions_ticket_id ON public.pawn_transactions (ticket_id);
+CREATE INDEX IF NOT EXISTS idx_pawn_tickets_status ON public.pawn_tickets (status);
 
 -- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
