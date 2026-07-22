@@ -266,3 +266,9 @@ ALTER TABLE public.recurring_invoices ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View recurring" ON public.recurring_invoices FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant','Sales Lead']));
 CREATE POLICY "Manage recurring" ON public.recurring_invoices FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+-- ---- fixed-asset depreciation -----------------------------------------
+ALTER TABLE public.depreciation_entries ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View depreciation" ON public.depreciation_entries FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
+CREATE POLICY "Manage depreciation" ON public.depreciation_entries FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));

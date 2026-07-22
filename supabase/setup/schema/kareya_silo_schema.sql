@@ -700,6 +700,7 @@ BEGIN
     ('1010', 'Bank', 'asset', 'bank', true),
     ('1100', 'Accounts Receivable', 'asset', 'receivable', true),
     ('1200', 'Inventory', 'asset', 'inventory', false),
+    ('1500', 'Accumulated Depreciation', 'asset', 'contra', false),
     ('2000', 'Accounts Payable', 'liability', 'payable', true),
     ('2100', 'Tax Payable', 'liability', 'tax', true),
     ('3000', 'Owner Equity', 'equity', 'equity', true),
@@ -711,6 +712,7 @@ BEGIN
     ('5200', 'Rent', 'expense', 'operating', false),
     ('5300', 'Utilities', 'expense', 'operating', false),
     ('5400', 'Office Supplies', 'expense', 'operating', false),
+    ('5500', 'Depreciation Expense', 'expense', 'operating', false),
     ('5900', 'Other Expenses', 'expense', 'other', false);
 
   INSERT INTO tax_rates (name, rate, is_default) VALUES ('VAT 10%', 10, true), ('Zero-rated', 0, false);
@@ -1102,3 +1104,27 @@ CREATE TABLE public.recurring_invoices (
   CONSTRAINT recurring_invoices_frequency_check CHECK (frequency = ANY (ARRAY['weekly','monthly','quarterly','yearly'])),
   CONSTRAINT recurring_invoices_status_check CHECK (status = ANY (ARRAY['active','paused','ended']))
 );
+
+-- =====================================================================
+-- FIXED-ASSET DEPRECIATION
+-- Depreciation config lives on the asset; each run records an entry and
+-- posts DR Depreciation Expense / CR Accumulated Depreciation.
+-- =====================================================================
+ALTER TABLE public.assets ADD COLUMN IF NOT EXISTS useful_life_months integer DEFAULT 0;
+ALTER TABLE public.assets ADD COLUMN IF NOT EXISTS salvage_value numeric DEFAULT 0;
+ALTER TABLE public.assets ADD COLUMN IF NOT EXISTS depreciation_method text DEFAULT 'straight_line';
+ALTER TABLE public.assets ADD COLUMN IF NOT EXISTS depreciation_start date;
+ALTER TABLE public.assets ADD COLUMN IF NOT EXISTS accumulated_depreciation numeric DEFAULT 0;
+
+CREATE TABLE public.depreciation_entries (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  asset_id uuid,
+  period date DEFAULT CURRENT_DATE,
+  amount numeric NOT NULL DEFAULT 0,
+  book_value numeric DEFAULT 0,           -- net book value after this entry
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT depreciation_entries_pkey PRIMARY KEY (id),
+  CONSTRAINT depreciation_entries_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset_id ON public.depreciation_entries (asset_id);
