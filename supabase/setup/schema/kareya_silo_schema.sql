@@ -944,3 +944,43 @@ CREATE TABLE public.kb_articles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kb_articles_category ON public.kb_articles (category);
+
+-- =====================================================================
+-- PROJECTS upgrades: budget, milestones, time tracking
+-- =====================================================================
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS budget numeric DEFAULT 0;
+
+CREATE TABLE public.project_milestones (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  project_id uuid,
+  title text NOT NULL,
+  due_date date,
+  status text DEFAULT 'pending'::text,   -- pending | done
+  completed_at timestamp with time zone,
+  sort_order integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT project_milestones_pkey PRIMARY KEY (id),
+  CONSTRAINT project_milestones_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE,
+  CONSTRAINT project_milestones_status_check CHECK (status = ANY (ARRAY['pending','done']))
+);
+
+CREATE TABLE public.time_entries (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  project_id uuid,
+  task_id uuid,
+  employee_id uuid,
+  hours numeric NOT NULL DEFAULT 0,
+  description text,
+  date date DEFAULT CURRENT_DATE,
+  billable boolean DEFAULT true,
+  rate numeric DEFAULT 0,                 -- billable rate per hour (snapshot)
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT time_entries_pkey PRIMARY KEY (id),
+  CONSTRAINT time_entries_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE,
+  CONSTRAINT time_entries_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE SET NULL,
+  CONSTRAINT time_entries_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_milestones_project_id ON public.project_milestones (project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_project_id ON public.time_entries (project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_employee_id ON public.time_entries (employee_id);

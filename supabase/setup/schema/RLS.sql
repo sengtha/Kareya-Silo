@@ -223,3 +223,16 @@ ALTER TABLE public.kb_articles ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View kb articles" ON public.kb_articles FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage kb articles" ON public.kb_articles FOR ALL TO authenticated USING (has_any_role(ARRAY['Support'])) WITH CHECK (has_any_role(ARRAY['Support']));
+
+-- ---- projects: milestones / time entries ------------------------------
+ALTER TABLE public.project_milestones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.time_entries ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View milestones" ON public.project_milestones FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage milestones" ON public.project_milestones FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+
+-- Employees see/log their own time; managers & admins see all
+CREATE POLICY "View time entries" ON public.time_entries FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "Log own time" ON public.time_entries FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
+CREATE POLICY "Update time entries" ON public.time_entries FOR UPDATE TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
+CREATE POLICY "Delete time entries" ON public.time_entries FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Manager']));
