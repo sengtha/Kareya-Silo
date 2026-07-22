@@ -1007,3 +1007,49 @@ CREATE TABLE public.campaigns (
   CONSTRAINT campaigns_pkey PRIMARY KEY (id),
   CONSTRAINT campaigns_status_check CHECK (status = ANY (ARRAY['draft','scheduled','active','completed','cancelled']))
 );
+
+-- =====================================================================
+-- PROCUREMENT: purchase orders & goods receipt (procure-to-pay)
+-- Front half of the buying cycle: requisition (draft) -> approved ->
+-- ordered -> received. Receiving posts stock_movements (type 'in') for
+-- any linked stock item, and a PO can be turned into a vendor bill.
+-- =====================================================================
+CREATE TABLE public.purchase_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  po_number text NOT NULL,
+  vendor_id uuid,
+  status text DEFAULT 'draft'::text,     -- draft(requisition) | approved | ordered | received | cancelled
+  order_date date DEFAULT CURRENT_DATE,
+  expected_date date,
+  subtotal numeric DEFAULT 0,
+  tax_rate numeric DEFAULT 0,
+  tax_amount numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  notes text,
+  requested_by uuid,
+  approved_by uuid,
+  bill_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT purchase_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT purchase_orders_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES public.vendors(id) ON DELETE SET NULL,
+  CONSTRAINT purchase_orders_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT purchase_orders_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT purchase_orders_bill_id_fkey FOREIGN KEY (bill_id) REFERENCES public.bills(id) ON DELETE SET NULL,
+  CONSTRAINT purchase_orders_status_check CHECK (status = ANY (ARRAY['draft','approved','ordered','received','cancelled']))
+);
+
+CREATE TABLE public.purchase_order_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  po_id uuid,
+  description text NOT NULL,
+  quantity numeric DEFAULT 1,
+  price numeric DEFAULT 0,
+  received_qty numeric DEFAULT 0,
+  stock_item_id uuid,
+  CONSTRAINT purchase_order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT purchase_order_items_po_id_fkey FOREIGN KEY (po_id) REFERENCES public.purchase_orders(id) ON DELETE CASCADE,
+  CONSTRAINT purchase_order_items_stock_item_id_fkey FOREIGN KEY (stock_item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_vendor_id ON public.purchase_orders (vendor_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_items_po_id ON public.purchase_order_items (po_id);

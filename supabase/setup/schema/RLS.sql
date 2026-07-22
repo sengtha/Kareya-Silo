@@ -242,3 +242,12 @@ ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View campaigns" ON public.campaigns FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage campaigns" ON public.campaigns FOR ALL TO authenticated USING (has_any_role(ARRAY['Marketing'])) WITH CHECK (has_any_role(ARRAY['Marketing']));
+
+-- ---- procurement: purchase orders -------------------------------------
+ALTER TABLE public.purchase_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchase_order_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View purchase orders" ON public.purchase_orders FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage purchase orders" ON public.purchase_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+CREATE POLICY "View PO items" ON public.purchase_order_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage PO items" ON public.purchase_order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
