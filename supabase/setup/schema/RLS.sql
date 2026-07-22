@@ -732,3 +732,23 @@ CREATE POLICY "Employees read silo-media" ON storage.objects FOR SELECT TO authe
 CREATE POLICY "Employees write silo-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'silo-media' AND is_employee());
 CREATE POLICY "Employees update silo-media" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) WITH CHECK (bucket_id = 'silo-media' AND is_employee());
 CREATE POLICY "Employees delete silo-media" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'silo-media' AND is_employee());
+
+-- =====================================================================
+-- E-SIGNATURE
+-- Requests: any employee may create/view; the requester or a manager may
+-- cancel (update). Signatures are APPEND-ONLY from clients: INSERT + SELECT
+-- only — no UPDATE/DELETE policy exists, so the audit trail is immutable.
+-- External signing bypasses these via the esign-public edge function
+-- (service role), which validates the unguessable public_token itself.
+-- esign_config: cert (public half) readable by employees; changes go through
+-- esign_set_key()/esign_clear_key(), which enforce owner-only themselves.
+-- =====================================================================
+ALTER TABLE public.signature_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.signatures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.esign_config ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View signature requests" ON public.signature_requests FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Create signature requests" ON public.signature_requests FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "Update signature requests" ON public.signature_requests FOR UPDATE TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View signatures" ON public.signatures FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Record signatures" ON public.signatures FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "View esign config" ON public.esign_config FOR SELECT TO authenticated USING (is_employee());

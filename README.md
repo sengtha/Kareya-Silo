@@ -75,10 +75,16 @@ supabase functions deploy ai-chat
 supabase functions deploy ai-generate
 supabase functions deploy ai-ingest
 supabase functions deploy ai-embed
+supabase functions deploy notify
+supabase functions deploy esign-public --no-verify-jwt
+supabase functions deploy esign-xades
 ```
 `authenticate-hub-user` must be public (`--no-verify-jwt`): it is called with a
-raw ticket, before any Silo session exists. The AI functions verify the caller's
-Silo JWT, so deploy them with JWT verification on (the default).
+raw ticket, before any Silo session exists. `esign-public` must also be public:
+external customers open it from a tokenized signing link with no Silo session —
+the unguessable `public_token` is the credential it validates itself. The AI
+functions, `notify`, and `esign-xades` verify the caller's Silo JWT, so deploy
+them with JWT verification on (the default).
 
 ### 4. Configure edge-function secrets
 

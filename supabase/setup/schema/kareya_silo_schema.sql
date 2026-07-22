@@ -3441,3 +3441,141 @@ $function$;
 REVOKE ALL ON FUNCTION public.ai_get_secret(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.ai_get_secret(text) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ai_get_secret(text) TO service_role;
+
+-- =====================================================================
+-- E-SIGNATURE (three levels)
+--   L1  In-app electronic signature: signer identity (Silo JWT) + drawn/typed
+--       signature image + SHA-256 hash of the signed content + timestamp.
+--   L2  External signers: a tokenized public link served by the esign-public
+--       edge function lets a customer sign without an account.
+--   L3  XAdES scaffold: the esign-xades edge function wraps a UBL invoice in
+--       an enveloped XMLDSig/XAdES-BES signature using an owner-supplied
+--       X.509 certificate; the private key lives ONLY in Supabase Vault.
+-- signatures are append-only: RLS grants INSERT + SELECT, never UPDATE or
+-- DELETE — the audit trail cannot be edited from any client.
+-- =====================================================================
+CREATE TABLE public.signature_requests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  entity_type text DEFAULT 'document'::text,   -- document | quote | invoice | pawn_ticket | delivery | other
+  entity_id uuid,                              -- id in the entity's own table
+  title text NOT NULL,                         -- what is being signed, human-readable
+  content_hash text NOT NULL,                  -- SHA-256 hex of the canonical content
+  status text DEFAULT 'pending'::text,         -- pending | signed | declined | cancelled | expired
+  requested_by uuid,
+  signer_kind text DEFAULT 'employee'::text,   -- employee | external
+  signer_employee_id uuid,                     -- when signer_kind = employee
+  signer_name text,                            -- expected external signer
+  signer_email text,
+  signer_phone text,
+  public_token text,                           -- unguessable token for external links
+  expires_at timestamp with time zone,
+  signed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT signature_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT signature_requests_token_key UNIQUE (public_token),
+  CONSTRAINT signature_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT signature_requests_signer_emp_fkey FOREIGN KEY (signer_employee_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT signature_requests_status_check CHECK (status = ANY (ARRAY['pending','signed','declined','cancelled','expired'])),
+  CONSTRAINT signature_requests_kind_check CHECK (signer_kind = ANY (ARRAY['employee','external']))
+);
+
+CREATE TABLE public.signatures (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  request_id uuid NOT NULL,
+  signer_name text NOT NULL,
+  signer_identity text,                        -- auth.uid() for employees; email/phone for external
+  signature_kind text DEFAULT 'drawn'::text,   -- drawn | typed
+  signature_image text,                        -- data-URL PNG of the pad (or null for typed)
+  typed_name text,                             -- the typed signature text, when kind = typed
+  content_hash text NOT NULL,                  -- hash the signer actually attested to
+  ip_address text,
+  user_agent text,
+  signed_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT signatures_pkey PRIMARY KEY (id),
+  CONSTRAINT signatures_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.signature_requests(id) ON DELETE CASCADE,
+  CONSTRAINT signatures_kind_check CHECK (signature_kind = ANY (ARRAY['drawn','typed']))
+);
+CREATE INDEX IF NOT EXISTS idx_signature_requests_entity ON public.signature_requests (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_signature_requests_status ON public.signature_requests (status);
+CREATE INDEX IF NOT EXISTS idx_signatures_request_id ON public.signatures (request_id);
+
+-- XAdES signing configuration. The certificate (public) is stored in the row;
+-- the private key NEVER is — esign_set_key() puts it in Vault and stores only
+-- the vault uuid, mirroring the ai_config key handling.
+CREATE TABLE public.esign_config (
+  id boolean DEFAULT true NOT NULL,
+  cert_pem text,                               -- X.509 certificate, PEM
+  cert_subject text,                           -- display: who the cert names
+  key_id uuid,                                 -- Vault uuid of the PKCS#8 private key
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT esign_config_pkey PRIMARY KEY (id),
+  CONSTRAINT esign_config_singleton CHECK (id = true)
+);
+
+-- Owner-only: store/replace the signing key in Vault and the cert in config.
+CREATE OR REPLACE FUNCTION public.esign_set_key(p_cert_pem text, p_key_pem text, p_subject text DEFAULT NULL)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_old uuid;
+  v_new uuid;
+BEGIN
+  IF NOT is_admin_or_founder() THEN
+    RAISE EXCEPTION 'Only the workspace owner may configure signing keys';
+  END IF;
+  SELECT key_id INTO v_old FROM esign_config WHERE id;
+  IF v_old IS NOT NULL THEN
+    DELETE FROM vault.secrets WHERE id = v_old;
+  END IF;
+  v_new := vault.create_secret(p_key_pem, 'esign_private_key_' || gen_random_uuid());
+  INSERT INTO esign_config (id, cert_pem, cert_subject, key_id, updated_at)
+  VALUES (true, p_cert_pem, p_subject, v_new, now())
+  ON CONFLICT (id) DO UPDATE SET cert_pem = excluded.cert_pem, cert_subject = excluded.cert_subject, key_id = excluded.key_id, updated_at = now();
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.esign_set_key(text, text, text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.esign_clear_key()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_old uuid;
+BEGIN
+  IF NOT is_admin_or_founder() THEN
+    RAISE EXCEPTION 'Only the workspace owner may configure signing keys';
+  END IF;
+  SELECT key_id INTO v_old FROM esign_config WHERE id;
+  IF v_old IS NOT NULL THEN
+    DELETE FROM vault.secrets WHERE id = v_old;
+  END IF;
+  UPDATE esign_config SET cert_pem = NULL, cert_subject = NULL, key_id = NULL, updated_at = now() WHERE id;
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.esign_clear_key() TO authenticated;
+
+-- Service-role-only bridge for the esign-xades edge function.
+CREATE OR REPLACE FUNCTION public.esign_get_key()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_id uuid;
+  v_val text;
+BEGIN
+  SELECT key_id INTO v_id FROM esign_config WHERE id;
+  IF v_id IS NULL THEN RETURN NULL; END IF;
+  SELECT decrypted_secret INTO v_val FROM vault.decrypted_secrets WHERE id = v_id;
+  RETURN v_val;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.esign_get_key() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.esign_get_key() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.esign_get_key() TO service_role;
