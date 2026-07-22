@@ -1882,3 +1882,105 @@ CREATE TABLE public.lab_qc_runs (
 CREATE INDEX IF NOT EXISTS idx_lab_orders_sample_id ON public.lab_orders (sample_id);
 CREATE INDEX IF NOT EXISTS idx_lab_samples_status ON public.lab_samples (status);
 CREATE INDEX IF NOT EXISTS idx_lab_qc_runs_run_date ON public.lab_qc_runs (run_date);
+
+-- =====================================================================
+-- GRANTS / RESEARCH MANAGEMENT (RMS)
+-- Handles both directions: grants RECEIVED from funders (incoming) and
+-- grants a foundation AWARDS to grantees (outgoing). Tracks budget lines,
+-- milestones/deliverables, disbursement tranches and expenditure.
+-- =====================================================================
+CREATE TABLE public.funders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  type text DEFAULT 'foundation'::text,  -- government | foundation | corporate | individual | multilateral | academic
+  contact_name text,
+  email text,
+  phone text,
+  country text,
+  website text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT funders_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.grants (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  code text,
+  funder_id uuid,
+  direction text DEFAULT 'incoming'::text, -- incoming (we receive) | outgoing (we award)
+  program text,
+  pi_id uuid,                              -- principal investigator / lead (employee)
+  status text DEFAULT 'draft'::text,       -- draft | submitted | awarded | active | closed | rejected
+  amount numeric DEFAULT 0,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  indirect_rate numeric DEFAULT 0,         -- overhead %
+  start_date date,
+  end_date date,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT grants_pkey PRIMARY KEY (id),
+  CONSTRAINT grants_funder_id_fkey FOREIGN KEY (funder_id) REFERENCES public.funders(id) ON DELETE SET NULL,
+  CONSTRAINT grants_pi_id_fkey FOREIGN KEY (pi_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT grants_direction_check CHECK (direction = ANY (ARRAY['incoming','outgoing'])),
+  CONSTRAINT grants_status_check CHECK (status = ANY (ARRAY['draft','submitted','awarded','active','closed','rejected']))
+);
+
+CREATE TABLE public.grant_budget_lines (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  grant_id uuid,
+  category text DEFAULT 'other'::text,     -- personnel | equipment | travel | supplies | subcontract | indirect | other
+  description text,
+  budgeted numeric DEFAULT 0,
+  CONSTRAINT grant_budget_lines_pkey PRIMARY KEY (id),
+  CONSTRAINT grant_budget_lines_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.grants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.grant_milestones (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  grant_id uuid,
+  title text NOT NULL,
+  type text DEFAULT 'milestone'::text,     -- report | deliverable | milestone | payment
+  due_date date,
+  status text DEFAULT 'pending'::text,     -- pending | submitted | approved
+  completed_at timestamp with time zone,
+  notes text,
+  CONSTRAINT grant_milestones_pkey PRIMARY KEY (id),
+  CONSTRAINT grant_milestones_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.grants(id) ON DELETE CASCADE,
+  CONSTRAINT grant_milestones_status_check CHECK (status = ANY (ARRAY['pending','submitted','approved']))
+);
+
+CREATE TABLE public.grant_disbursements (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  grant_id uuid,
+  amount numeric DEFAULT 0,
+  date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'scheduled'::text,   -- scheduled | received | paid
+  reference text,
+  notes text,
+  CONSTRAINT grant_disbursements_pkey PRIMARY KEY (id),
+  CONSTRAINT grant_disbursements_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.grants(id) ON DELETE CASCADE,
+  CONSTRAINT grant_disbursements_status_check CHECK (status = ANY (ARRAY['scheduled','received','paid']))
+);
+
+CREATE TABLE public.grant_expenses (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  grant_id uuid,
+  budget_line_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  description text,
+  amount numeric DEFAULT 0,
+  vendor text,
+  reference text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT grant_expenses_pkey PRIMARY KEY (id),
+  CONSTRAINT grant_expenses_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.grants(id) ON DELETE CASCADE,
+  CONSTRAINT grant_expenses_budget_line_id_fkey FOREIGN KEY (budget_line_id) REFERENCES public.grant_budget_lines(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_grants_funder_id ON public.grants (funder_id);
+CREATE INDEX IF NOT EXISTS idx_grant_budget_lines_grant_id ON public.grant_budget_lines (grant_id);
+CREATE INDEX IF NOT EXISTS idx_grant_milestones_grant_id ON public.grant_milestones (grant_id);
+CREATE INDEX IF NOT EXISTS idx_grant_disbursements_grant_id ON public.grant_disbursements (grant_id);
+CREATE INDEX IF NOT EXISTS idx_grant_expenses_grant_id ON public.grant_expenses (grant_id);

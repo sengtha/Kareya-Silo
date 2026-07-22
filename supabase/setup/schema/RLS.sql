@@ -433,3 +433,24 @@ CREATE POLICY "View lab instruments" ON public.lab_instruments FOR SELECT TO aut
 CREATE POLICY "Manage lab instruments" ON public.lab_instruments FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
 CREATE POLICY "View lab qc" ON public.lab_qc_runs FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage lab qc" ON public.lab_qc_runs FOR ALL TO authenticated USING (has_any_role(ARRAY['Lab','Manager'])) WITH CHECK (has_any_role(ARRAY['Lab','Manager']));
+
+-- ---- grants / research management -------------------------------------
+ALTER TABLE public.funders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.grant_budget_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.grant_milestones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.grant_disbursements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.grant_expenses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View funders" ON public.funders FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage funders" ON public.funders FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+CREATE POLICY "View grants" ON public.grants FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grants" ON public.grants FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+CREATE POLICY "View grant budget" ON public.grant_budget_lines FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grant budget" ON public.grant_budget_lines FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+CREATE POLICY "View grant milestones" ON public.grant_milestones FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grant milestones" ON public.grant_milestones FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+CREATE POLICY "View grant disbursements" ON public.grant_disbursements FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grant disbursements" ON public.grant_disbursements FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+CREATE POLICY "View grant expenses" ON public.grant_expenses FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage grant expenses" ON public.grant_expenses FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
