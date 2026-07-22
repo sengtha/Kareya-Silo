@@ -345,3 +345,18 @@ ALTER TABLE public.shipments ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View shipments" ON public.shipments FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage shipments" ON public.shipments FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+
+-- ---- traceability: lots / serials / containers ------------------------
+ALTER TABLE public.stock_lots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.serial_units ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.containers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.container_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View lots" ON public.stock_lots FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lots" ON public.stock_lots FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View serials" ON public.serial_units FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage serials" ON public.serial_units FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View containers" ON public.containers FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage containers" ON public.containers FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View container items" ON public.container_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage container items" ON public.container_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));

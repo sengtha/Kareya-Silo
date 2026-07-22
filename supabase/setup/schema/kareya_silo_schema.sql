@@ -1460,3 +1460,91 @@ ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS rating numeric DEFAULT 0;   
 ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS on_time_count integer DEFAULT 0;
 ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS delivery_count integer DEFAULT 0;
 ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS is_preferred boolean DEFAULT false;
+
+-- =====================================================================
+-- TRACEABILITY: lot/batch, serial numbers & shipping containers
+-- Full chain traceability for recalls, expiry (FEFO) and import/export.
+-- =====================================================================
+-- Flag how each stock item is tracked.
+ALTER TABLE public.stock_items ADD COLUMN IF NOT EXISTS tracking text DEFAULT 'none';  -- none | lot | serial
+ALTER TABLE public.stock_items ADD CONSTRAINT stock_items_tracking_check CHECK (tracking = ANY (ARRAY['none','lot','serial']));
+
+-- Lot / batch records (manufacture & expiry, FEFO).
+CREATE TABLE public.stock_lots (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  item_id uuid,
+  lot_number text NOT NULL,
+  quantity numeric DEFAULT 0,
+  manufacture_date date,
+  expiry_date date,
+  warehouse_id uuid,
+  status text DEFAULT 'active'::text,    -- active | quarantine | expired | consumed
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_lots_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_lots_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  CONSTRAINT stock_lots_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL,
+  CONSTRAINT stock_lots_status_check CHECK (status = ANY (ARRAY['active','quarantine','expired','consumed']))
+);
+
+-- Individually serialized units.
+CREATE TABLE public.serial_units (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  item_id uuid,
+  serial_number text NOT NULL,
+  status text DEFAULT 'in_stock'::text,  -- in_stock | allocated | sold | returned | scrapped
+  lot_id uuid,
+  warehouse_id uuid,
+  sold_to uuid,
+  sales_order_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT serial_units_pkey PRIMARY KEY (id),
+  CONSTRAINT serial_units_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  CONSTRAINT serial_units_lot_id_fkey FOREIGN KEY (lot_id) REFERENCES public.stock_lots(id) ON DELETE SET NULL,
+  CONSTRAINT serial_units_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL,
+  CONSTRAINT serial_units_sold_to_fkey FOREIGN KEY (sold_to) REFERENCES public.clients(id) ON DELETE SET NULL,
+  CONSTRAINT serial_units_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL,
+  CONSTRAINT serial_units_status_check CHECK (status = ANY (ARRAY['in_stock','allocated','sold','returned','scrapped']))
+);
+
+-- Shipping containers (import / export).
+CREATE TABLE public.containers (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  container_number text NOT NULL,
+  type text DEFAULT '20ft'::text,        -- 20ft | 40ft | reefer | lcl | other
+  status text DEFAULT 'planned'::text,   -- planned | loading | in_transit | arrived | unloaded | cleared
+  direction text DEFAULT 'inbound'::text,-- inbound | outbound
+  origin text,
+  destination text,
+  carrier text,
+  bill_of_lading text,
+  eta date,
+  arrival_date date,
+  purchase_order_id uuid,
+  shipment_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT containers_pkey PRIMARY KEY (id),
+  CONSTRAINT containers_po_fkey FOREIGN KEY (purchase_order_id) REFERENCES public.purchase_orders(id) ON DELETE SET NULL,
+  CONSTRAINT containers_shipment_fkey FOREIGN KEY (shipment_id) REFERENCES public.shipments(id) ON DELETE SET NULL,
+  CONSTRAINT containers_status_check CHECK (status = ANY (ARRAY['planned','loading','in_transit','arrived','unloaded','cleared'])),
+  CONSTRAINT containers_direction_check CHECK (direction = ANY (ARRAY['inbound','outbound']))
+);
+
+CREATE TABLE public.container_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  container_id uuid,
+  description text NOT NULL,
+  item_id uuid,
+  quantity numeric DEFAULT 0,
+  lot_number text,
+  CONSTRAINT container_items_pkey PRIMARY KEY (id),
+  CONSTRAINT container_items_container_id_fkey FOREIGN KEY (container_id) REFERENCES public.containers(id) ON DELETE CASCADE,
+  CONSTRAINT container_items_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_lots_item_id ON public.stock_lots (item_id);
+CREATE INDEX IF NOT EXISTS idx_stock_lots_expiry ON public.stock_lots (expiry_date);
+CREATE INDEX IF NOT EXISTS idx_serial_units_item_id ON public.serial_units (item_id);
+CREATE INDEX IF NOT EXISTS idx_container_items_container_id ON public.container_items (container_id);
