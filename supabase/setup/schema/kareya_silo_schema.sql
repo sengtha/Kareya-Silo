@@ -611,15 +611,18 @@ CREATE TABLE public.candidates (
   CONSTRAINT candidates_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.job_postings(id) ON DELETE CASCADE
 );
 
+-- Social/public posts are limited to product & service announcements
+-- (job recruiting is handled by job_postings). The type CHECK enforces this.
 CREATE TABLE public.market_announcements (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   title text NOT NULL,
-  type text DEFAULT 'news'::text,
+  type text DEFAULT 'product'::text,
   content text,
   date date DEFAULT CURRENT_DATE,
   is_public boolean DEFAULT true,
   created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT market_announcements_pkey PRIMARY KEY (id)
+  CONSTRAINT market_announcements_pkey PRIMARY KEY (id),
+  CONSTRAINT market_announcements_type_check CHECK (type = ANY (ARRAY['product'::text, 'service'::text]))
 );
 
 CREATE INDEX IF NOT EXISTS idx_candidates_job_id ON public.candidates (job_id);
