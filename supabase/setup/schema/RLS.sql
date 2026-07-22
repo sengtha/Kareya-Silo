@@ -207,3 +207,13 @@ CREATE POLICY "View quotes" ON public.quotes FOR SELECT TO authenticated USING (
 CREATE POLICY "Manage quotes" ON public.quotes FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
 CREATE POLICY "View quote items" ON public.quote_items FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage quote items" ON public.quote_items FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+
+-- ---- inventory: stock items / movements -------------------------------
+ALTER TABLE public.stock_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View stock items" ON public.stock_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage stock items" ON public.stock_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+
+CREATE POLICY "View stock movements" ON public.stock_movements FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage stock movements" ON public.stock_movements FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));

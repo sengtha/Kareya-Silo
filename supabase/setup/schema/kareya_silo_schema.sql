@@ -871,3 +871,45 @@ CREATE TABLE public.quote_items (
 
 CREATE INDEX IF NOT EXISTS idx_quotes_client_id ON public.quotes (client_id);
 CREATE INDEX IF NOT EXISTS idx_quote_items_quote_id ON public.quote_items (quote_id);
+
+-- =====================================================================
+-- INVENTORY: stock items & movements (trading / consumable stock)
+-- Distinct from `assets` (fixed equipment register). Stock is quantity-
+-- tracked with reorder levels and an audit trail of every movement.
+-- =====================================================================
+CREATE TABLE public.stock_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  sku text,
+  name text NOT NULL,
+  category text,
+  unit text DEFAULT 'unit'::text,        -- unit | box | kg | litre | hour ...
+  cost_price numeric DEFAULT 0,          -- what we pay
+  sale_price numeric DEFAULT 0,          -- what we charge
+  quantity numeric DEFAULT 0,            -- current on-hand (maintained by movements)
+  reorder_level numeric DEFAULT 0,       -- low-stock threshold
+  vendor_id uuid,
+  location text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_items_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_items_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES public.vendors(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.stock_movements (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  item_id uuid,
+  type text DEFAULT 'in'::text,          -- in (receive) | out (issue/sell) | adjust (stock-take)
+  quantity numeric NOT NULL,             -- always positive; direction implied by type
+  unit_cost numeric DEFAULT 0,
+  reason text,                           -- purchase | sale | damage | return | correction ...
+  reference text,                        -- PO/invoice/note reference
+  date date DEFAULT CURRENT_DATE,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_movements_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  CONSTRAINT stock_movements_type_check CHECK (type = ANY (ARRAY['in','out','adjust']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_items_vendor_id ON public.stock_items (vendor_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_item_id ON public.stock_movements (item_id);
