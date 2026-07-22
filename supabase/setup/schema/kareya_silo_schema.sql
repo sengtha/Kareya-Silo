@@ -2582,3 +2582,32 @@ GRANT EXECUTE ON FUNCTION public.match_kb_chunks(vector, integer, double precisi
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('kb-sources', 'kb-sources', false)
 ON CONFLICT (id) DO NOTHING;
+
+-- Service-role-only bridge for edge functions to read a decrypted key from
+-- Vault. NOT callable by authenticated/anon — only the ai-* edge functions
+-- (which run with the service role) may decrypt. p_kind is 'chat' or 'embedding'.
+CREATE OR REPLACE FUNCTION public.ai_get_secret(p_kind text)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_id uuid;
+  v_val text;
+BEGIN
+  IF p_kind = 'chat' THEN
+    SELECT chat_key_id INTO v_id FROM ai_config WHERE id;
+  ELSIF p_kind = 'embedding' THEN
+    SELECT embedding_key_id INTO v_id FROM ai_config WHERE id;
+  ELSE
+    RAISE EXCEPTION 'Unknown secret kind: %', p_kind;
+  END IF;
+  IF v_id IS NULL THEN RETURN NULL; END IF;
+  SELECT decrypted_secret INTO v_val FROM vault.decrypted_secrets WHERE id = v_id;
+  RETURN v_val;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.ai_get_secret(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.ai_get_secret(text) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ai_get_secret(text) TO service_role;
