@@ -458,3 +458,48 @@ AS $function$
       )
   );
 $function$;
+
+-- =====================================================================
+-- Careers & announcements (business-owned; the authenticated app reads
+-- and writes these on the Silo client). A cross-silo PUBLIC feed on the
+-- Hub for logged-out browsing is a future enhancement.
+-- =====================================================================
+CREATE TABLE public.job_postings (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  department text,
+  type text DEFAULT 'full_time'::text,
+  status text DEFAULT 'open'::text,
+  description text,
+  salary_range text,
+  is_public boolean DEFAULT true,
+  posted_date date DEFAULT CURRENT_DATE,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT job_postings_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.candidates (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  job_id uuid,
+  name text NOT NULL,
+  email text NOT NULL,
+  phone text,
+  stage text DEFAULT 'new'::text,
+  applied_date timestamp with time zone DEFAULT now(),
+  rating integer DEFAULT 0,
+  CONSTRAINT candidates_pkey PRIMARY KEY (id),
+  CONSTRAINT candidates_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.job_postings(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.market_announcements (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  type text DEFAULT 'news'::text,
+  content text,
+  date date DEFAULT CURRENT_DATE,
+  is_public boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT market_announcements_pkey PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidates_job_id ON public.candidates (job_id);

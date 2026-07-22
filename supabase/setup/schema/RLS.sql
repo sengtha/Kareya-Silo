@@ -125,3 +125,17 @@ CREATE POLICY "Manage assets" ON public.assets FOR ALL TO authenticated USING (i
 CREATE POLICY "View own notifications" ON public.notifications FOR SELECT TO authenticated USING (auth.uid() = recipient_id);
 CREATE POLICY "Insert notifications" ON public.notifications FOR INSERT TO authenticated WITH CHECK (is_employee());
 CREATE POLICY "Update own notifications" ON public.notifications FOR UPDATE TO authenticated USING (auth.uid() = recipient_id);
+
+-- ---- careers & announcements ------------------------------------------
+ALTER TABLE public.job_postings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.market_announcements ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View jobs" ON public.job_postings FOR SELECT TO authenticated USING (is_employee() OR is_public = true);
+CREATE POLICY "Manage jobs" ON public.job_postings FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+
+CREATE POLICY "View candidates" ON public.candidates FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage candidates" ON public.candidates FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+
+CREATE POLICY "View announcements" ON public.market_announcements FOR SELECT TO authenticated USING (is_employee() OR is_public = true);
+CREATE POLICY "Manage announcements" ON public.market_announcements FOR ALL TO authenticated USING (has_any_role(ARRAY['Marketing'])) WITH CHECK (has_any_role(ARRAY['Marketing']));
