@@ -1053,3 +1053,29 @@ CREATE TABLE public.purchase_order_items (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_vendor_id ON public.purchase_orders (vendor_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_order_items_po_id ON public.purchase_order_items (po_id);
+
+-- =====================================================================
+-- EXPENSE CLAIMS: employee-submitted, manager-approved, posts to ledger
+-- =====================================================================
+CREATE TABLE public.expense_claims (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  employee_id uuid,
+  title text NOT NULL,
+  category text,
+  account_id uuid,                       -- expense account to debit
+  amount numeric DEFAULT 0,
+  date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'pending'::text,   -- pending | approved | rejected | reimbursed
+  receipt_url text,
+  notes text,
+  approved_by uuid,
+  reimbursed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT expense_claims_pkey PRIMARY KEY (id),
+  CONSTRAINT expense_claims_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT expense_claims_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.chart_of_accounts(id) ON DELETE SET NULL,
+  CONSTRAINT expense_claims_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT expense_claims_status_check CHECK (status = ANY (ARRAY['pending','approved','rejected','reimbursed']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_claims_employee_id ON public.expense_claims (employee_id);

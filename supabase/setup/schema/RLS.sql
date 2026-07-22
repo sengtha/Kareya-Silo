@@ -251,3 +251,12 @@ CREATE POLICY "View purchase orders" ON public.purchase_orders FOR SELECT TO aut
 CREATE POLICY "Manage purchase orders" ON public.purchase_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
 CREATE POLICY "View PO items" ON public.purchase_order_items FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage PO items" ON public.purchase_order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+
+-- ---- expense claims ---------------------------------------------------
+ALTER TABLE public.expense_claims ENABLE ROW LEVEL SECURITY;
+
+-- Employees see and file their own claims; Accountant/Manager see & manage all
+CREATE POLICY "View expense claims" ON public.expense_claims FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR has_any_role(ARRAY['Accountant','Manager']));
+CREATE POLICY "File own expense claim" ON public.expense_claims FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR has_any_role(ARRAY['Accountant','Manager']));
+CREATE POLICY "Update expense claims" ON public.expense_claims FOR UPDATE TO authenticated USING (has_any_role(ARRAY['Accountant','Manager']) OR (employee_id = current_employee_id() AND status = 'pending'));
+CREATE POLICY "Delete own expense claim" ON public.expense_claims FOR DELETE TO authenticated USING ((employee_id = current_employee_id() AND status = 'pending') OR has_any_role(ARRAY['Accountant']));
