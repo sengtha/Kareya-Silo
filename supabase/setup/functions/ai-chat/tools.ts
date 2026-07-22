@@ -14,6 +14,8 @@ export interface ToolCtx {
   // Embed a query with Gemini (null when no embedding key / RAG disabled).
   embed: ((text: string) => Promise<number[]>) | null
   ragEnabled: boolean
+  // Per-silo opt-in: when false, only read tools are exposed (no write actions).
+  writeEnabled: boolean
 }
 
 export interface ToolDef {
@@ -134,7 +136,9 @@ export function buildTools(ctx: ToolCtx): ToolDef[] {
     },
   })
 
-  tools.push({
+  // Write tools are opt-in per silo (ai_config.tools_write_enabled). The RPC
+  // still enforces authorization; this flag is a second, owner-controlled gate.
+  if (ctx.writeEnabled) tools.push({
     name: 'process_document_request',
     description:
       "Advance a document request through its approval workflow. action must be one of: approve, reject, return, resubmit. This performs a REAL state change. The workflow rules are enforced server-side — you may only act on a request the user is authorized to action (the user cannot approve their own request, and must hold a role allowed at the current step); if not, this returns an error. Always call list_document_requests first to obtain the id and confirm the request is still pending. Only call this when the user has clearly asked to approve/reject/return/resubmit a specific document.",

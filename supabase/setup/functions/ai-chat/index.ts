@@ -65,7 +65,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const tools = buildTools({ userClient, embed, ragEnabled })
+    const tools = buildTools({ userClient, embed, ragEnabled, writeEnabled: !!cfg.tools_write_enabled })
 
     const system =
       (cfg.system_prompt && cfg.system_prompt.trim()) ||

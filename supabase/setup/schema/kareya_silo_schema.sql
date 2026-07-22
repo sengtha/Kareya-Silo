@@ -2444,6 +2444,7 @@ CREATE TABLE public.ai_config (
   id boolean NOT NULL DEFAULT true,
   enabled boolean DEFAULT false,               -- chat assistant on/off
   rag_enabled boolean DEFAULT false,           -- knowledge retrieval on/off
+  tools_write_enabled boolean DEFAULT false,   -- allow assistant write actions (opt-in)
   chat_provider text DEFAULT 'claude',         -- claude | openai | gemini
   chat_model text,                             -- e.g. claude-opus-4-8 / gpt-4o / gemini-3-flash
   system_prompt text,
