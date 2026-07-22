@@ -371,6 +371,28 @@ CREATE POLICY "View stock levels" ON public.stock_levels FOR SELECT TO authentic
 CREATE POLICY "Manage stock levels" ON public.stock_levels FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View stock transfers" ON public.stock_transfers FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage stock transfers" ON public.stock_transfers FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+-- WMS: bins are configured by Manager/Accountant; the operational layer
+-- (bin stock moves, pick execution, counting) is done by any employee on the
+-- floor. Applying a cycle count adjusts real stock, so that stays with
+-- Manager/Accountant via the stock_levels/stock_items policies.
+ALTER TABLE public.warehouse_bins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bin_stock ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.picking_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.picking_task_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cycle_counts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cycle_count_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View bins" ON public.warehouse_bins FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage bins" ON public.warehouse_bins FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View bin stock" ON public.bin_stock FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Move bin stock" ON public.bin_stock FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View picking tasks" ON public.picking_tasks FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Work picking tasks" ON public.picking_tasks FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View picking task items" ON public.picking_task_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Work picking task items" ON public.picking_task_items FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View cycle counts" ON public.cycle_counts FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Work cycle counts" ON public.cycle_counts FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View cycle count items" ON public.cycle_count_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Work cycle count items" ON public.cycle_count_items FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
 
 -- ---- shipments / deliveries -------------------------------------------
 ALTER TABLE public.shipments ENABLE ROW LEVEL SECURITY;

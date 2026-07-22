@@ -1705,6 +1705,102 @@ CREATE TABLE public.stock_transfers (
 CREATE INDEX IF NOT EXISTS idx_stock_levels_warehouse_id ON public.stock_levels (warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_stock_transfers_item_id ON public.stock_transfers (item_id);
 
+-- ---------------------------------------------------------------------
+-- WMS (deep): bin locations, pick lists, cycle counts
+-- Bins subdivide a warehouse into addressable locations (zone/aisle/shelf).
+-- bin_stock tracks per-bin on-hand: putaway increments, picking decrements —
+-- it is an operational layer under the warehouse-level stock_levels, which
+-- remain the accounting truth. Cycle counts snapshot expected quantities,
+-- capture counted values, and on apply adjust real stock.
+-- ---------------------------------------------------------------------
+CREATE TABLE public.warehouse_bins (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  warehouse_id uuid NOT NULL,
+  code text NOT NULL,                        -- e.g. 'A-01-02' (aisle-bay-shelf)
+  zone text,                                 -- e.g. 'Receiving', 'Fast picks'
+  kind text DEFAULT 'storage'::text,         -- storage | picking | receiving | shipping
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT warehouse_bins_pkey PRIMARY KEY (id),
+  CONSTRAINT warehouse_bins_wh_code_key UNIQUE (warehouse_id, code),
+  CONSTRAINT warehouse_bins_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE CASCADE,
+  CONSTRAINT warehouse_bins_kind_check CHECK (kind = ANY (ARRAY['storage','picking','receiving','shipping']))
+);
+
+CREATE TABLE public.bin_stock (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  bin_id uuid NOT NULL,
+  item_id uuid NOT NULL,
+  quantity numeric DEFAULT 0,
+  CONSTRAINT bin_stock_pkey PRIMARY KEY (id),
+  CONSTRAINT bin_stock_bin_item_key UNIQUE (bin_id, item_id),
+  CONSTRAINT bin_stock_bin_id_fkey FOREIGN KEY (bin_id) REFERENCES public.warehouse_bins(id) ON DELETE CASCADE,
+  CONSTRAINT bin_stock_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.picking_tasks (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  task_number text,
+  warehouse_id uuid,
+  reference text,                            -- SO / shipment / free-text
+  status text DEFAULT 'open'::text,          -- open | in_progress | done | cancelled
+  assigned_to uuid,
+  notes text,
+  completed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT picking_tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT picking_tasks_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL,
+  CONSTRAINT picking_tasks_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT picking_tasks_status_check CHECK (status = ANY (ARRAY['open','in_progress','done','cancelled']))
+);
+
+CREATE TABLE public.picking_task_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  task_id uuid NOT NULL,
+  item_id uuid,
+  bin_id uuid,                               -- suggested pick location
+  quantity numeric DEFAULT 0,                -- to pick
+  picked_quantity numeric DEFAULT 0,
+  status text DEFAULT 'pending'::text,       -- pending | picked | short
+  CONSTRAINT picking_task_items_pkey PRIMARY KEY (id),
+  CONSTRAINT picking_task_items_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.picking_tasks(id) ON DELETE CASCADE,
+  CONSTRAINT picking_task_items_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL,
+  CONSTRAINT picking_task_items_bin_id_fkey FOREIGN KEY (bin_id) REFERENCES public.warehouse_bins(id) ON DELETE SET NULL,
+  CONSTRAINT picking_task_items_status_check CHECK (status = ANY (ARRAY['pending','picked','short']))
+);
+
+CREATE TABLE public.cycle_counts (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  count_number text,
+  warehouse_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'open'::text,          -- open | counted | applied | cancelled
+  counted_by uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cycle_counts_pkey PRIMARY KEY (id),
+  CONSTRAINT cycle_counts_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL,
+  CONSTRAINT cycle_counts_counted_by_fkey FOREIGN KEY (counted_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT cycle_counts_status_check CHECK (status = ANY (ARRAY['open','counted','applied','cancelled']))
+);
+
+CREATE TABLE public.cycle_count_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  count_id uuid NOT NULL,
+  item_id uuid,
+  expected_quantity numeric DEFAULT 0,       -- snapshot when the count opened
+  counted_quantity numeric,                  -- null until counted
+  CONSTRAINT cycle_count_items_pkey PRIMARY KEY (id),
+  CONSTRAINT cycle_count_items_count_id_fkey FOREIGN KEY (count_id) REFERENCES public.cycle_counts(id) ON DELETE CASCADE,
+  CONSTRAINT cycle_count_items_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_warehouse_bins_warehouse_id ON public.warehouse_bins (warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_bin_stock_bin_id ON public.bin_stock (bin_id);
+CREATE INDEX IF NOT EXISTS idx_bin_stock_item_id ON public.bin_stock (item_id);
+CREATE INDEX IF NOT EXISTS idx_picking_task_items_task_id ON public.picking_task_items (task_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_count_items_count_id ON public.cycle_count_items (count_id);
+
 -- =====================================================================
 -- SHIPMENTS / DELIVERIES (logistics layer over fulfilled orders + fleet)
 -- =====================================================================
