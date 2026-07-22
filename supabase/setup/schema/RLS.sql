@@ -360,3 +360,19 @@ CREATE POLICY "View containers" ON public.containers FOR SELECT TO authenticated
 CREATE POLICY "Manage containers" ON public.containers FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
 CREATE POLICY "View container items" ON public.container_items FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage container items" ON public.container_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+
+-- ---- LMS: courses / lessons / enrollments -----------------------------
+ALTER TABLE public.courses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.course_lessons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.course_enrollments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View courses" ON public.courses FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage courses" ON public.courses FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+CREATE POLICY "View lessons" ON public.course_lessons FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage lessons" ON public.course_lessons FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+
+-- Employees enroll and drive their own progress; HR sees & manages all.
+CREATE POLICY "View enrollments" ON public.course_enrollments FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Enrol self" ON public.course_enrollments FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Update own enrollment" ON public.course_enrollments FOR UPDATE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Delete own enrollment" ON public.course_enrollments FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());

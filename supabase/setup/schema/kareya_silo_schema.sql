@@ -1548,3 +1548,58 @@ CREATE INDEX IF NOT EXISTS idx_stock_lots_item_id ON public.stock_lots (item_id)
 CREATE INDEX IF NOT EXISTS idx_stock_lots_expiry ON public.stock_lots (expiry_date);
 CREATE INDEX IF NOT EXISTS idx_serial_units_item_id ON public.serial_units (item_id);
 CREATE INDEX IF NOT EXISTS idx_container_items_container_id ON public.container_items (container_id);
+
+-- =====================================================================
+-- LMS (Learning Management): courses, lessons & enrollments
+-- Employee learning & development — onboarding, compliance, upskilling.
+-- Completing all lessons auto-issues a certificate.
+-- =====================================================================
+CREATE TABLE public.courses (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  description text,
+  category text,
+  level text DEFAULT 'beginner'::text,   -- beginner | intermediate | advanced
+  instructor_id uuid,
+  duration_hours numeric DEFAULT 0,
+  passing_score integer DEFAULT 0,
+  is_published boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT courses_pkey PRIMARY KEY (id),
+  CONSTRAINT courses_instructor_id_fkey FOREIGN KEY (instructor_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT courses_level_check CHECK (level = ANY (ARRAY['beginner','intermediate','advanced']))
+);
+
+CREATE TABLE public.course_lessons (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  course_id uuid,
+  title text NOT NULL,
+  content text,
+  video_url text,
+  sort_order integer DEFAULT 0,
+  duration_min integer DEFAULT 0,
+  CONSTRAINT course_lessons_pkey PRIMARY KEY (id),
+  CONSTRAINT course_lessons_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.course_enrollments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  course_id uuid,
+  employee_id uuid,
+  status text DEFAULT 'enrolled'::text,   -- enrolled | in_progress | completed
+  progress integer DEFAULT 0,
+  completed_lessons jsonb DEFAULT '[]'::jsonb,
+  score integer,
+  enrolled_at timestamp with time zone DEFAULT now(),
+  completed_at timestamp with time zone,
+  certificate_number text,
+  certified_at timestamp with time zone,
+  CONSTRAINT course_enrollments_pkey PRIMARY KEY (id),
+  CONSTRAINT course_enrollments_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id) ON DELETE CASCADE,
+  CONSTRAINT course_enrollments_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE,
+  CONSTRAINT course_enrollments_unique UNIQUE (course_id, employee_id),
+  CONSTRAINT course_enrollments_status_check CHECK (status = ANY (ARRAY['enrolled','in_progress','completed']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id ON public.course_lessons (course_id);
+CREATE INDEX IF NOT EXISTS idx_course_enrollments_employee_id ON public.course_enrollments (employee_id);
