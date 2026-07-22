@@ -36,9 +36,18 @@ ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 -- The authenticate-hub-user edge function also provisions/updates this
 -- row from the authoritative Hub role (service role bypasses RLS), so
 -- the self-insert path is a fallback.
-CREATE POLICY "Insert own employee row" ON public.employees FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+-- Self-insert fallback: a user may create only their OWN row, tied to their
+-- JWT email, and only as Staff. Elevated roles must come from the service-role
+-- edge function or an admin — this closes the self-escalation-to-Admin hole.
+CREATE POLICY "Insert own employee row" ON public.employees FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id AND email = (auth.jwt() ->> 'email') AND (roles IS NULL OR roles <@ ARRAY['Staff']::text[]));
 CREATE POLICY "View co-workers" ON public.employees FOR SELECT TO authenticated USING (is_employee());
-CREATE POLICY "Manage employees" ON public.employees FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+-- Admins/Founders have full control over employee rows including role grants.
+CREATE POLICY "Admins manage employees" ON public.employees FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+-- HR may manage employees but may NEVER create or leave a row holding Admin/Founder
+-- (separation of duties — HR cannot mint admins or self-promote).
+CREATE POLICY "HR manage non-privileged employees" ON public.employees FOR ALL TO authenticated
+  USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin() AND roles_are_unprivileged(roles));
 
 -- ---- departments / roles ----------------------------------------------
 CREATE POLICY "View departments" ON public.departments FOR SELECT TO authenticated USING (is_employee());
@@ -76,7 +85,13 @@ CREATE POLICY "View templates" ON public.document_templates FOR SELECT TO authen
 CREATE POLICY "Manage templates" ON public.document_templates FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
 
 CREATE POLICY "View documents" ON public.document_requests FOR SELECT TO authenticated USING (is_employee());
-CREATE POLICY "Manage documents" ON public.document_requests FOR ALL TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+-- Employees may file only their OWN request. All approval/reject/return/resubmit
+-- state transitions are performed exclusively by process_document() (SECURITY
+-- DEFINER), which enforces the approver's role and separation of duties. Direct
+-- table UPDATEs are reserved for admins (manual rescue of stuck documents).
+CREATE POLICY "Create own document" ON public.document_requests FOR INSERT TO authenticated WITH CHECK (requester_id = current_employee_id());
+CREATE POLICY "Admins update documents" ON public.document_requests FOR UPDATE TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+CREATE POLICY "Delete own or admin documents" ON public.document_requests FOR DELETE TO authenticated USING (requester_id = current_employee_id() OR is_admin_or_founder());
 
 -- ---- calendar ----------------------------------------------------------
 CREATE POLICY "View events" ON public.calendar_events FOR SELECT TO authenticated USING (is_employee());

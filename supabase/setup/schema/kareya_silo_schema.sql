@@ -417,9 +417,9 @@ CREATE OR REPLACE FUNCTION public.is_admin_or_founder()
  SET search_path TO 'public'
 AS $function$
   SELECT EXISTS (
-    SELECT 1 FROM employees
-    WHERE (user_id = auth.uid() OR email = (auth.jwt() ->> 'email'))
-      AND (roles @> ARRAY['Admin']::text[] OR roles @> ARRAY['Founder']::text[])
+    SELECT 1 FROM employees e, unnest(e.roles) r
+    WHERE (e.user_id = auth.uid() OR e.email = (auth.jwt() ->> 'email'))
+      AND lower(r) IN ('admin', 'founder')
   );
 $function$;
 
@@ -430,14 +430,9 @@ CREATE OR REPLACE FUNCTION public.is_hr_or_admin()
  SET search_path TO 'public'
 AS $function$
   SELECT EXISTS (
-    SELECT 1 FROM employees
-    WHERE (user_id = auth.uid() OR email = (auth.jwt() ->> 'email'))
-      AND (
-        roles @> ARRAY['Admin']::text[] OR
-        roles @> ARRAY['Founder']::text[] OR
-        roles @> ARRAY['HR']::text[] OR
-        roles @> ARRAY['HR Manager']::text[]
-      )
+    SELECT 1 FROM employees e, unnest(e.roles) r
+    WHERE (e.user_id = auth.uid() OR e.email = (auth.jwt() ->> 'email'))
+      AND lower(r) IN ('admin', 'founder', 'hr', 'hr manager')
   );
 $function$;
 
@@ -449,15 +444,140 @@ CREATE OR REPLACE FUNCTION public.has_any_role(required_roles text[])
  SET search_path TO 'public'
 AS $function$
   SELECT EXISTS (
-    SELECT 1 FROM employees
-    WHERE (user_id = auth.uid() OR email = (auth.jwt() ->> 'email'))
+    SELECT 1 FROM employees e, unnest(e.roles) r
+    WHERE (e.user_id = auth.uid() OR e.email = (auth.jwt() ->> 'email'))
       AND (
-        roles @> ARRAY['Admin']::text[] OR
-        roles @> ARRAY['Founder']::text[] OR
-        roles && required_roles
+        lower(r) IN ('admin', 'founder')
+        OR lower(r) IN (SELECT lower(x) FROM unnest(required_roles) x)
       )
   );
 $function$;
+
+-- True when a role array contains NO privileged (admin/founder) role.
+-- Used by the employees WITH CHECK so HR cannot mint admins.
+CREATE OR REPLACE FUNCTION public.roles_are_unprivileged(rs text[])
+ RETURNS boolean
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  SELECT NOT EXISTS (
+    SELECT 1 FROM unnest(coalesce(rs, ARRAY[]::text[])) r
+    WHERE lower(r) IN ('admin', 'founder')
+  );
+$function$;
+
+-- =====================================================================
+-- DOCUMENT APPROVAL ENGINE (server-authoritative)
+-- Advances a document request through its template workflow. SECURITY
+-- DEFINER so it can update the row while the table's RLS forbids direct
+-- writes. Enforces, on the SERVER: (a) the caller is an employee, (b) the
+-- caller holds one of the CURRENT step's allowedRoles (admins bypass),
+-- (c) separation of duties — the requester may never approve/reject/return
+-- their own request, and (d) only the requester (or an admin) may resubmit.
+-- =====================================================================
+CREATE OR REPLACE FUNCTION public.process_document(p_doc_id uuid, p_action text, p_comment text DEFAULT '')
+ RETURNS public.document_requests
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp      employees;
+  v_doc      document_requests;
+  v_tpl      document_templates;
+  v_cur      jsonb;
+  v_next     jsonb;
+  v_allowed  text[];
+  v_priv     boolean;
+  v_status   text;
+  v_next_id  text;
+  v_next_ord integer;
+BEGIN
+  -- Identify the caller's employee row (prefer a user_id match).
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST
+    LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  v_priv := EXISTS (SELECT 1 FROM unnest(v_emp.roles) r WHERE lower(r) IN ('admin', 'founder'));
+
+  SELECT * INTO v_doc FROM document_requests WHERE id = p_doc_id FOR UPDATE;
+  IF v_doc.id IS NULL THEN RAISE EXCEPTION 'Document not found'; END IF;
+
+  SELECT * INTO v_tpl FROM document_templates WHERE id = v_doc.template_id;
+
+  -- Locate the current step object in the template workflow.
+  IF v_tpl.id IS NOT NULL AND v_doc.current_step_id IS NOT NULL THEN
+    SELECT s INTO v_cur FROM jsonb_array_elements(coalesce(v_tpl.workflow, '[]'::jsonb)) s
+      WHERE s->>'id' = v_doc.current_step_id LIMIT 1;
+  END IF;
+
+  IF p_action IN ('approve', 'reject', 'return') THEN
+    IF v_doc.status <> 'pending' THEN RAISE EXCEPTION 'Document is not awaiting approval'; END IF;
+    IF v_cur IS NULL THEN
+      -- Orphaned/stuck (no resolvable step): only an admin may act to rescue it.
+      IF NOT v_priv THEN RAISE EXCEPTION 'No current step to act on'; END IF;
+    ELSE
+      IF v_doc.requester_id = v_emp.id THEN RAISE EXCEPTION 'You cannot action your own request'; END IF;
+      v_allowed := ARRAY(SELECT jsonb_array_elements_text(coalesce(v_cur->'allowedRoles', '[]'::jsonb)));
+      IF NOT v_priv AND NOT EXISTS (
+        SELECT 1 FROM unnest(v_emp.roles) er JOIN unnest(v_allowed) ar ON lower(er) = lower(ar)
+      ) THEN
+        RAISE EXCEPTION 'Your role is not authorized to approve this step';
+      END IF;
+    END IF;
+  ELSIF p_action = 'resubmit' THEN
+    IF v_doc.requester_id <> v_emp.id AND NOT v_priv THEN RAISE EXCEPTION 'Only the requester may resubmit'; END IF;
+    IF v_doc.status NOT IN ('returned', 'rejected') THEN RAISE EXCEPTION 'Only returned or rejected requests can be resubmitted'; END IF;
+  ELSE
+    RAISE EXCEPTION 'Unknown action: %', p_action;
+  END IF;
+
+  -- Compute the transition.
+  IF p_action = 'approve' THEN
+    SELECT s INTO v_next FROM jsonb_array_elements(coalesce(v_tpl.workflow, '[]'::jsonb)) s
+      WHERE (s->>'order')::int > coalesce(v_doc.current_step_order, 0)
+      ORDER BY (s->>'order')::int LIMIT 1;
+    IF v_next IS NULL THEN
+      v_status := 'approved'; v_next_id := NULL; v_next_ord := 0;
+    ELSE
+      v_status := 'pending'; v_next_id := v_next->>'id'; v_next_ord := (v_next->>'order')::int;
+    END IF;
+  ELSIF p_action = 'reject' THEN
+    v_status := 'rejected'; v_next_id := NULL; v_next_ord := v_doc.current_step_order;
+  ELSIF p_action = 'return' THEN
+    v_status := 'returned'; v_next_id := v_doc.current_step_id; v_next_ord := v_doc.current_step_order;
+  ELSE -- resubmit
+    SELECT s INTO v_next FROM jsonb_array_elements(coalesce(v_tpl.workflow, '[]'::jsonb)) s
+      ORDER BY (s->>'order')::int LIMIT 1;
+    v_status := 'pending'; v_next_id := v_next->>'id'; v_next_ord := coalesce((v_next->>'order')::int, 0);
+  END IF;
+
+  UPDATE document_requests SET
+    status = v_status,
+    current_step_id = v_next_id,
+    current_step_order = v_next_ord,
+    updated_at = now(),
+    history = coalesce(history, '[]'::jsonb) || jsonb_build_object(
+      'id', 'hist_' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+      'action', p_action,
+      'actorId', v_emp.id,
+      'actorName', v_emp.name,
+      'timestamp', to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'comment', coalesce(p_comment, '')
+    )
+  WHERE id = p_doc_id
+  RETURNING * INTO v_doc;
+
+  RETURN v_doc;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.process_document(uuid, text, text) TO authenticated;
+
+-- Canonical role registry: no two roles may share a name (case-insensitive).
+CREATE UNIQUE INDEX IF NOT EXISTS roles_name_lower_key ON public.roles (lower(name));
 
 -- =====================================================================
 -- Careers & announcements (business-owned; the authenticated app reads
