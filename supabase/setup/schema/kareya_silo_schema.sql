@@ -2674,6 +2674,92 @@ CREATE INDEX IF NOT EXISTS idx_retail_sales_shift_id ON public.retail_sales (shi
 CREATE INDEX IF NOT EXISTS idx_retail_sale_items_sale_id ON public.retail_sale_items (sale_id);
 
 -- =====================================================================
+-- MICROFINANCE / LENDING (loan products, borrowers, loans, schedules)
+-- =====================================================================
+CREATE TABLE public.loan_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  interest_rate numeric DEFAULT 0,           -- ANNUAL %, e.g. 18
+  interest_method text DEFAULT 'declining'::text, -- flat | declining
+  default_term_months integer DEFAULT 12,
+  fee_flat numeric DEFAULT 0,
+  fee_percent numeric DEFAULT 0,
+  currency text DEFAULT 'USD'::text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT loan_products_pkey PRIMARY KEY (id),
+  CONSTRAINT loan_products_method_check CHECK (interest_method = ANY (ARRAY['flat','declining']))
+);
+
+CREATE TABLE public.borrowers (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  phone text,
+  national_id text,
+  address text,
+  occupation text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT borrowers_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.loans (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  loan_number text,
+  borrower_id uuid,
+  product_id uuid,
+  principal numeric DEFAULT 0,
+  interest_rate numeric DEFAULT 0,
+  term_months integer DEFAULT 12,
+  method text DEFAULT 'declining'::text,     -- flat | declining
+  purpose text,
+  officer_id uuid,
+  disbursed_date date,
+  status text DEFAULT 'pending'::text,       -- pending | active | closed | rejected | defaulted
+  currency text DEFAULT 'USD'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT loans_pkey PRIMARY KEY (id),
+  CONSTRAINT loans_borrower_id_fkey FOREIGN KEY (borrower_id) REFERENCES public.borrowers(id) ON DELETE SET NULL,
+  CONSTRAINT loans_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.loan_products(id) ON DELETE SET NULL,
+  CONSTRAINT loans_officer_id_fkey FOREIGN KEY (officer_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT loans_status_check CHECK (status = ANY (ARRAY['pending','active','closed','rejected','defaulted']))
+);
+
+CREATE TABLE public.loan_schedule (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  loan_id uuid NOT NULL,
+  installment_no integer NOT NULL,
+  due_date date,
+  principal_due numeric DEFAULT 0,
+  interest_due numeric DEFAULT 0,
+  total_due numeric DEFAULT 0,
+  paid_amount numeric DEFAULT 0,
+  status text DEFAULT 'pending'::text,       -- pending | partial | paid
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT loan_schedule_pkey PRIMARY KEY (id),
+  CONSTRAINT loan_schedule_loan_id_fkey FOREIGN KEY (loan_id) REFERENCES public.loans(id) ON DELETE CASCADE,
+  CONSTRAINT loan_schedule_status_check CHECK (status = ANY (ARRAY['pending','partial','paid']))
+);
+
+CREATE TABLE public.loan_repayments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  loan_id uuid NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  amount numeric DEFAULT 0,
+  method text DEFAULT 'cash'::text,
+  received_by uuid,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT loan_repayments_pkey PRIMARY KEY (id),
+  CONSTRAINT loan_repayments_loan_id_fkey FOREIGN KEY (loan_id) REFERENCES public.loans(id) ON DELETE CASCADE,
+  CONSTRAINT loan_repayments_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_loans_borrower_id ON public.loans (borrower_id);
+CREATE INDEX IF NOT EXISTS idx_loan_schedule_loan_id ON public.loan_schedule (loan_id);
+CREATE INDEX IF NOT EXISTS idx_loan_repayments_loan_id ON public.loan_repayments (loan_id);
+
+-- =====================================================================
 -- AI ASSISTANT + RAG  (per-silo, owner-configured)
 -- The silo OWNER (Admin/Founder) picks a chat provider (Claude / OpenAI /
 -- Gemini) and supplies API keys. Keys are NEVER stored in a readable column —

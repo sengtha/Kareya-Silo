@@ -569,6 +569,26 @@ CREATE POLICY "Manage retail sales" ON public.retail_sales FOR ALL TO authentica
 CREATE POLICY "View retail sale items" ON public.retail_sale_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Cashier','Accountant','Manager']));
 CREATE POLICY "Manage retail sale items" ON public.retail_sale_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
 
+-- ---- microfinance / lending -------------------------------------------
+ALTER TABLE public.loan_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.borrowers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loan_schedule ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loan_repayments ENABLE ROW LEVEL SECURITY;
+
+-- Lending team = Loan Officer / Accountant / Manager. Products & disbursement
+-- decisions are limited to Manager/Accountant; officers originate and collect.
+CREATE POLICY "View loan products" ON public.loan_products FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "Manage loan products" ON public.loan_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Accountant','Manager']));
+CREATE POLICY "View borrowers" ON public.borrowers FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "Manage borrowers" ON public.borrowers FOR ALL TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "View loans" ON public.loans FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "Manage loans" ON public.loans FOR ALL TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "View loan schedule" ON public.loan_schedule FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "Manage loan schedule" ON public.loan_schedule FOR ALL TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "View loan repayments" ON public.loan_repayments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+CREATE POLICY "Manage loan repayments" ON public.loan_repayments FOR ALL TO authenticated USING (has_any_role(ARRAY['Loan Officer','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Loan Officer','Accountant','Manager']));
+
 -- =====================================================================
 -- AI ASSISTANT + RAG
 -- ai_config: every employee may READ (to know if the assistant is on, which
