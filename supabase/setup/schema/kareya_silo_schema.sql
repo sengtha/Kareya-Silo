@@ -2459,6 +2459,27 @@ CREATE TABLE public.ai_config (
   CONSTRAINT ai_config_provider_check CHECK (chat_provider = ANY (ARRAY['claude','openai','gemini']))
 );
 
+-- ---------------------------------------------------------------------
+-- E-invoice configuration (per-silo). Jurisdiction/registration values for
+-- the UBL 2.1 export (Cambodia CamInvoice / GDT by default). Singleton row.
+-- ---------------------------------------------------------------------
+CREATE TABLE public.einvoice_config (
+  id boolean NOT NULL DEFAULT true,
+  enabled boolean DEFAULT true,                        -- show the UBL export
+  customization_id text DEFAULT 'KH-UBL-2.1',          -- GDT CustomizationID
+  profile_id text DEFAULT 'CamInvoice:1.0',            -- GDT ProfileID
+  tax_scheme text DEFAULT 'VAT',
+  default_vat_rate numeric DEFAULT 10,
+  tax_currency text,                                   -- null = same as document currency
+  default_invoice_type text DEFAULT '388',             -- 388 tax / 380 commercial / 381 CN / 383 DN
+  country_code text DEFAULT 'KH',
+  supplier_tin text,                                   -- override; else the default business profile Tax ID
+  updated_by uuid,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT einvoice_config_pkey PRIMARY KEY (id),
+  CONSTRAINT einvoice_config_singleton CHECK (id = true)
+);
+
 -- Owner-only secret management. Raw keys go straight into Vault; only the
 -- opaque secret uuid is stored on ai_config. p_kind is 'chat' or 'embedding'.
 CREATE OR REPLACE FUNCTION public.ai_set_secret(p_kind text, p_value text)

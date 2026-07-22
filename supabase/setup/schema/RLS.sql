@@ -550,6 +550,12 @@ ALTER TABLE public.kb_chunks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "View ai config" ON public.ai_config FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Owner manages ai config" ON public.ai_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
 
+-- einvoice_config: employees may read (invoice screens need the values to build
+-- the UBL export); only Admin/Founder may change the registration identifiers.
+ALTER TABLE public.einvoice_config ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View einvoice config" ON public.einvoice_config FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Owner manages einvoice config" ON public.einvoice_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+
 -- Knowledge base: all employees can read; Support/Manager (and owners) curate.
 -- Ingestion normally runs via the edge function (service role), which bypasses RLS.
 CREATE POLICY "View kb documents" ON public.kb_documents FOR SELECT TO authenticated USING (is_employee());
