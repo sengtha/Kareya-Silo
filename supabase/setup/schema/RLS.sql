@@ -454,3 +454,69 @@ CREATE POLICY "View grant disbursements" ON public.grant_disbursements FOR SELEC
 CREATE POLICY "Manage grant disbursements" ON public.grant_disbursements FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
 CREATE POLICY "View grant expenses" ON public.grant_expenses FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage grant expenses" ON public.grant_expenses FOR ALL TO authenticated USING (has_any_role(ARRAY['Grants','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Grants','Accountant','Manager']));
+
+-- =====================================================================
+-- CLINIC EMR — PHI restricted to clinical + reception + manager roles
+-- =====================================================================
+ALTER TABLE public.patients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clinic_appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.encounters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.prescriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clinic_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clinic_invoice_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View patients" ON public.patients FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Accountant','Manager']));
+CREATE POLICY "Manage patients" ON public.patients FOR ALL TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Manager'])) WITH CHECK (has_any_role(ARRAY['Clinician','Nurse','Reception','Manager']));
+CREATE POLICY "View clinic appts" ON public.clinic_appointments FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Manager']));
+CREATE POLICY "Manage clinic appts" ON public.clinic_appointments FOR ALL TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Manager'])) WITH CHECK (has_any_role(ARRAY['Clinician','Nurse','Reception','Manager']));
+CREATE POLICY "View encounters" ON public.encounters FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Manager']));
+CREATE POLICY "Manage encounters" ON public.encounters FOR ALL TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Manager'])) WITH CHECK (has_any_role(ARRAY['Clinician','Nurse','Manager']));
+CREATE POLICY "View prescriptions" ON public.prescriptions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Manager']));
+CREATE POLICY "Manage prescriptions" ON public.prescriptions FOR ALL TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Manager'])) WITH CHECK (has_any_role(ARRAY['Clinician','Nurse','Manager']));
+CREATE POLICY "View clinic invoices" ON public.clinic_invoices FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Accountant','Manager']));
+CREATE POLICY "Manage clinic invoices" ON public.clinic_invoices FOR ALL TO authenticated USING (has_any_role(ARRAY['Reception','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Reception','Accountant','Manager']));
+CREATE POLICY "View clinic invoice items" ON public.clinic_invoice_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Clinician','Nurse','Reception','Accountant','Manager']));
+CREATE POLICY "Manage clinic invoice items" ON public.clinic_invoice_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Reception','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Reception','Accountant','Manager']));
+
+-- =====================================================================
+-- HOTEL PMS
+-- =====================================================================
+ALTER TABLE public.room_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hotel_guests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reservations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folio_charges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.housekeeping_tasks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View room types" ON public.room_types FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage room types" ON public.room_types FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Manager']));
+CREATE POLICY "View rooms" ON public.rooms FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage rooms" ON public.rooms FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Housekeeping','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Housekeeping','Manager']));
+CREATE POLICY "View hotel guests" ON public.hotel_guests FOR SELECT TO authenticated USING (has_any_role(ARRAY['FrontDesk','Accountant','Manager']));
+CREATE POLICY "Manage hotel guests" ON public.hotel_guests FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Manager']));
+CREATE POLICY "View reservations" ON public.reservations FOR SELECT TO authenticated USING (has_any_role(ARRAY['FrontDesk','Housekeeping','Accountant','Manager']));
+CREATE POLICY "Manage reservations" ON public.reservations FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Manager']));
+CREATE POLICY "View folio charges" ON public.folio_charges FOR SELECT TO authenticated USING (has_any_role(ARRAY['FrontDesk','Accountant','Manager']));
+CREATE POLICY "Manage folio charges" ON public.folio_charges FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Accountant','Manager']));
+CREATE POLICY "View housekeeping" ON public.housekeeping_tasks FOR SELECT TO authenticated USING (has_any_role(ARRAY['FrontDesk','Housekeeping','Manager']));
+CREATE POLICY "Manage housekeeping" ON public.housekeeping_tasks FOR ALL TO authenticated USING (has_any_role(ARRAY['FrontDesk','Housekeeping','Manager'])) WITH CHECK (has_any_role(ARRAY['FrontDesk','Housekeeping','Manager']));
+
+-- =====================================================================
+-- RESTAURANT POS + KDS
+-- =====================================================================
+ALTER TABLE public.menu_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.restaurant_tables ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.restaurant_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View menu categories" ON public.menu_categories FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage menu categories" ON public.menu_categories FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+CREATE POLICY "View menu items" ON public.menu_items FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage menu items" ON public.menu_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Cashier','Manager']));
+CREATE POLICY "View tables" ON public.restaurant_tables FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage tables" ON public.restaurant_tables FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Cashier','Manager']));
+CREATE POLICY "View restaurant orders" ON public.restaurant_orders FOR SELECT TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage restaurant orders" ON public.restaurant_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager']));
+CREATE POLICY "View order items" ON public.order_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage order items" ON public.order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Waiter','Kitchen','Cashier','Manager']));

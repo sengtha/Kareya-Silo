@@ -1986,3 +1986,322 @@ CREATE INDEX IF NOT EXISTS idx_grant_budget_lines_grant_id ON public.grant_budge
 CREATE INDEX IF NOT EXISTS idx_grant_milestones_grant_id ON public.grant_milestones (grant_id);
 CREATE INDEX IF NOT EXISTS idx_grant_disbursements_grant_id ON public.grant_disbursements (grant_id);
 CREATE INDEX IF NOT EXISTS idx_grant_expenses_grant_id ON public.grant_expenses (grant_id);
+
+-- =====================================================================
+-- CLINIC EMR (Electronic Medical Records)
+-- Patient registry, appointments, clinical encounters (SOAP + vitals),
+-- prescriptions and patient billing. Sensitive PHI — access is limited
+-- to clinical roles via RLS.
+-- =====================================================================
+CREATE TABLE public.patients (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  mrn text,                                  -- medical record number
+  first_name text NOT NULL,
+  last_name text,
+  dob date,
+  sex text,                                  -- male | female | other
+  phone text,
+  email text,
+  address text,
+  blood_type text,
+  allergies text,
+  chronic_conditions text,
+  emergency_contact text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT patients_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.clinic_appointments (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid,
+  provider_id uuid,                          -- attending employee
+  scheduled_at timestamp with time zone NOT NULL,
+  duration_min integer DEFAULT 30,
+  reason text,
+  status text DEFAULT 'scheduled'::text,     -- scheduled | arrived | in_progress | completed | cancelled | no_show
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT clinic_appointments_pkey PRIMARY KEY (id),
+  CONSTRAINT clinic_appointments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patients(id) ON DELETE CASCADE,
+  CONSTRAINT clinic_appointments_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT clinic_appointments_status_check CHECK (status = ANY (ARRAY['scheduled','arrived','in_progress','completed','cancelled','no_show']))
+);
+
+CREATE TABLE public.encounters (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid,
+  provider_id uuid,
+  appointment_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  chief_complaint text,
+  subjective text,                           -- S
+  objective text,                            -- O
+  assessment text,                           -- A
+  plan text,                                 -- P
+  diagnosis text,                            -- ICD-10 codes / free text
+  -- vitals
+  temp_c numeric,
+  pulse integer,
+  resp_rate integer,
+  systolic integer,
+  diastolic integer,
+  spo2 integer,
+  weight_kg numeric,
+  height_cm numeric,
+  status text DEFAULT 'open'::text,          -- open | signed
+  signed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT encounters_pkey PRIMARY KEY (id),
+  CONSTRAINT encounters_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patients(id) ON DELETE CASCADE,
+  CONSTRAINT encounters_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT encounters_appointment_id_fkey FOREIGN KEY (appointment_id) REFERENCES public.clinic_appointments(id) ON DELETE SET NULL,
+  CONSTRAINT encounters_status_check CHECK (status = ANY (ARRAY['open','signed']))
+);
+
+CREATE TABLE public.prescriptions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid,
+  encounter_id uuid,
+  provider_id uuid,
+  drug text NOT NULL,
+  dose text,
+  frequency text,
+  duration text,
+  quantity numeric,
+  refills integer DEFAULT 0,
+  instructions text,
+  status text DEFAULT 'active'::text,        -- active | completed | cancelled
+  date date DEFAULT CURRENT_DATE,
+  CONSTRAINT prescriptions_pkey PRIMARY KEY (id),
+  CONSTRAINT prescriptions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patients(id) ON DELETE CASCADE,
+  CONSTRAINT prescriptions_encounter_id_fkey FOREIGN KEY (encounter_id) REFERENCES public.encounters(id) ON DELETE SET NULL,
+  CONSTRAINT prescriptions_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT prescriptions_status_check CHECK (status = ANY (ARRAY['active','completed','cancelled']))
+);
+
+CREATE TABLE public.clinic_invoices (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid,
+  encounter_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  status text DEFAULT 'draft'::text,         -- draft | billed | paid
+  subtotal numeric DEFAULT 0,
+  tax numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  paid_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT clinic_invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT clinic_invoices_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patients(id) ON DELETE CASCADE,
+  CONSTRAINT clinic_invoices_encounter_id_fkey FOREIGN KEY (encounter_id) REFERENCES public.encounters(id) ON DELETE SET NULL,
+  CONSTRAINT clinic_invoices_status_check CHECK (status = ANY (ARRAY['draft','billed','paid']))
+);
+
+CREATE TABLE public.clinic_invoice_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  invoice_id uuid,
+  description text NOT NULL,
+  kind text DEFAULT 'service'::text,         -- consultation | procedure | lab | medication | service
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  CONSTRAINT clinic_invoice_items_pkey PRIMARY KEY (id),
+  CONSTRAINT clinic_invoice_items_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.clinic_invoices(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_appointments_patient_id ON public.clinic_appointments (patient_id);
+CREATE INDEX IF NOT EXISTS idx_clinic_appointments_scheduled_at ON public.clinic_appointments (scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_encounters_patient_id ON public.encounters (patient_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_patient_id ON public.prescriptions (patient_id);
+CREATE INDEX IF NOT EXISTS idx_clinic_invoices_patient_id ON public.clinic_invoices (patient_id);
+CREATE INDEX IF NOT EXISTS idx_clinic_invoice_items_invoice_id ON public.clinic_invoice_items (invoice_id);
+
+-- =====================================================================
+-- HOTEL PMS (Property Management System)
+-- Room inventory & types, guest profiles, reservations, guest folios
+-- (charges & payments) and housekeeping.
+-- =====================================================================
+CREATE TABLE public.room_types (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  base_rate numeric DEFAULT 0,
+  capacity integer DEFAULT 2,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT room_types_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.rooms (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  number text NOT NULL,
+  room_type_id uuid,
+  floor text,
+  status text DEFAULT 'available'::text,     -- available | occupied | dirty | maintenance
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT rooms_pkey PRIMARY KEY (id),
+  CONSTRAINT rooms_room_type_id_fkey FOREIGN KEY (room_type_id) REFERENCES public.room_types(id) ON DELETE SET NULL,
+  CONSTRAINT rooms_status_check CHECK (status = ANY (ARRAY['available','occupied','dirty','maintenance']))
+);
+
+CREATE TABLE public.hotel_guests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  first_name text NOT NULL,
+  last_name text,
+  phone text,
+  email text,
+  id_number text,                            -- passport / national ID
+  nationality text,
+  address text,
+  vip boolean DEFAULT false,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT hotel_guests_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.reservations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  code text,
+  guest_id uuid,
+  room_id uuid,
+  room_type_id uuid,
+  check_in date NOT NULL,
+  check_out date NOT NULL,
+  status text DEFAULT 'booked'::text,        -- booked | checked_in | checked_out | cancelled | no_show
+  adults integer DEFAULT 1,
+  children integer DEFAULT 0,
+  rate numeric DEFAULT 0,                     -- nightly rate
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  source text,                               -- walk_in | phone | ota | website | agent
+  checked_in_at timestamp with time zone,
+  checked_out_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT reservations_pkey PRIMARY KEY (id),
+  CONSTRAINT reservations_guest_id_fkey FOREIGN KEY (guest_id) REFERENCES public.hotel_guests(id) ON DELETE SET NULL,
+  CONSTRAINT reservations_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id) ON DELETE SET NULL,
+  CONSTRAINT reservations_room_type_id_fkey FOREIGN KEY (room_type_id) REFERENCES public.room_types(id) ON DELETE SET NULL,
+  CONSTRAINT reservations_status_check CHECK (status = ANY (ARRAY['booked','checked_in','checked_out','cancelled','no_show']))
+);
+
+CREATE TABLE public.folio_charges (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  reservation_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  type text DEFAULT 'room'::text,            -- room | food | minibar | laundry | service | tax | payment
+  description text,
+  amount numeric DEFAULT 0,                  -- positive = charge, positive payment rows use type='payment'
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT folio_charges_pkey PRIMARY KEY (id),
+  CONSTRAINT folio_charges_reservation_id_fkey FOREIGN KEY (reservation_id) REFERENCES public.reservations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.housekeeping_tasks (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  room_id uuid,
+  date date DEFAULT CURRENT_DATE,
+  type text DEFAULT 'cleaning'::text,        -- cleaning | inspection | maintenance | turndown
+  status text DEFAULT 'pending'::text,       -- pending | in_progress | done
+  assigned_to uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT housekeeping_tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT housekeeping_tasks_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id) ON DELETE CASCADE,
+  CONSTRAINT housekeeping_tasks_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT housekeeping_tasks_status_check CHECK (status = ANY (ARRAY['pending','in_progress','done']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rooms_room_type_id ON public.rooms (room_type_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_guest_id ON public.reservations (guest_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_check_in ON public.reservations (check_in);
+CREATE INDEX IF NOT EXISTS idx_folio_charges_reservation_id ON public.folio_charges (reservation_id);
+CREATE INDEX IF NOT EXISTS idx_housekeeping_tasks_room_id ON public.housekeeping_tasks (room_id);
+
+-- =====================================================================
+-- RESTAURANT POS + KDS (Kitchen Display System)
+-- Menu catalog, dining tables, orders and per-item kitchen routing so
+-- the kitchen display can track ticket items from queued -> ready.
+-- =====================================================================
+CREATE TABLE public.menu_categories (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  sort integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT menu_categories_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.menu_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  category_id uuid,
+  name text NOT NULL,
+  price numeric DEFAULT 0,
+  description text,
+  station text DEFAULT 'kitchen'::text,      -- kitchen | bar | dessert
+  available boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT menu_items_pkey PRIMARY KEY (id),
+  CONSTRAINT menu_items_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.menu_categories(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.restaurant_tables (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. "T1"
+  seats integer DEFAULT 4,
+  area text,                                 -- indoor | patio | bar | private
+  status text DEFAULT 'available'::text,     -- available | seated | billed
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT restaurant_tables_pkey PRIMARY KEY (id),
+  CONSTRAINT restaurant_tables_status_check CHECK (status = ANY (ARRAY['available','seated','billed']))
+);
+
+CREATE TABLE public.restaurant_orders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_no text,
+  table_id uuid,
+  type text DEFAULT 'dine_in'::text,         -- dine_in | takeaway | delivery
+  status text DEFAULT 'open'::text,          -- open | sent | preparing | ready | served | paid | cancelled
+  server_id uuid,
+  guests integer DEFAULT 1,
+  subtotal numeric DEFAULT 0,
+  tax numeric DEFAULT 0,
+  total numeric DEFAULT 0,
+  currency text DEFAULT 'USD',
+  exchange_rate numeric DEFAULT 1,
+  payment_method text,                       -- cash | card | qr | wallet
+  opened_at timestamp with time zone DEFAULT now(),
+  closed_at timestamp with time zone,
+  notes text,
+  CONSTRAINT restaurant_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT restaurant_orders_table_id_fkey FOREIGN KEY (table_id) REFERENCES public.restaurant_tables(id) ON DELETE SET NULL,
+  CONSTRAINT restaurant_orders_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT restaurant_orders_status_check CHECK (status = ANY (ARRAY['open','sent','preparing','ready','served','paid','cancelled']))
+);
+
+CREATE TABLE public.order_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  order_id uuid,
+  menu_item_id uuid,
+  name text NOT NULL,
+  station text DEFAULT 'kitchen'::text,
+  quantity numeric DEFAULT 1,
+  unit_price numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  status text DEFAULT 'queued'::text,        -- queued | preparing | ready | served | void
+  notes text,
+  sent_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.restaurant_orders(id) ON DELETE CASCADE,
+  CONSTRAINT order_items_menu_item_id_fkey FOREIGN KEY (menu_item_id) REFERENCES public.menu_items(id) ON DELETE SET NULL,
+  CONSTRAINT order_items_status_check CHECK (status = ANY (ARRAY['queued','preparing','ready','served','void']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_menu_items_category_id ON public.menu_items (category_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_table_id ON public.restaurant_orders (table_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_status ON public.restaurant_orders (status);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items (order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_status ON public.order_items (status);
