@@ -718,3 +718,61 @@ END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.seed_chart_of_accounts() TO authenticated;
+
+-- =====================================================================
+-- LEAVE MANAGEMENT
+-- ---------------------------------------------------------------------
+-- Employees request time off against leave_types (each with an annual
+-- entitlement); HR/Admin approve or reject. Balances are computed as
+-- entitlement minus approved days in the year.
+-- =====================================================================
+CREATE TABLE public.leave_types (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  days_per_year numeric DEFAULT 0,
+  is_paid boolean DEFAULT true,
+  color text DEFAULT '#0d9488'::text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT leave_types_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.leave_requests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  employee_id uuid,
+  type_id uuid,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  days numeric DEFAULT 1,
+  reason text,
+  status text DEFAULT 'pending'::text,   -- pending | approved | rejected | cancelled
+  approver_id uuid,
+  decided_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT leave_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT leave_requests_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE,
+  CONSTRAINT leave_requests_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.leave_types(id) ON DELETE SET NULL,
+  CONSTRAINT leave_requests_approver_id_fkey FOREIGN KEY (approver_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT leave_requests_status_check CHECK (status = ANY (ARRAY['pending','approved','rejected','cancelled']))
+);
+
+CREATE INDEX IF NOT EXISTS idx_leave_requests_employee_id ON public.leave_requests (employee_id);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON public.leave_requests (status);
+
+CREATE OR REPLACE FUNCTION public.seed_leave_types()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF EXISTS (SELECT 1 FROM leave_types) THEN RETURN; END IF;
+  INSERT INTO leave_types (name, days_per_year, is_paid, color) VALUES
+    ('Annual Leave', 18, true, '#0d9488'),
+    ('Sick Leave', 10, true, '#f59e0b'),
+    ('Unpaid Leave', 0, false, '#64748b'),
+    ('Maternity Leave', 90, true, '#ec4899');
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.seed_leave_types() TO authenticated;

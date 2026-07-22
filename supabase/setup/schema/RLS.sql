@@ -172,3 +172,15 @@ CREATE POLICY "Manage journal" ON public.journal_entries FOR ALL TO authenticate
 
 CREATE POLICY "View journal lines" ON public.journal_lines FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
 CREATE POLICY "Manage journal lines" ON public.journal_lines FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+-- ---- leave management --------------------------------------------------
+ALTER TABLE public.leave_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.leave_requests ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View leave types" ON public.leave_types FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage leave types" ON public.leave_types FOR ALL TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
+
+CREATE POLICY "View leave requests" ON public.leave_requests FOR SELECT TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
+CREATE POLICY "Create own leave request" ON public.leave_requests FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id());
+CREATE POLICY "Update leave requests" ON public.leave_requests FOR UPDATE TO authenticated USING (is_hr_or_admin() OR employee_id = current_employee_id());
+CREATE POLICY "Delete own leave request" ON public.leave_requests FOR DELETE TO authenticated USING (employee_id = current_employee_id() OR is_hr_or_admin());
