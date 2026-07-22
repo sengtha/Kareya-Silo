@@ -43,7 +43,13 @@ supabase/setup/
     ai-generate/             one-shot AI helpers (text, doc OCR/templates, etc.)
     ai-ingest/               chunk + embed knowledge-base sources (incl. PDF)
     ai-embed/                Gemini batch embeddings
+    notify/                  resolves event recipients → relays push to the Hub
 ```
+
+Push notifications are delivered by the **Hub** (browsers hold one subscription,
+bound to the Hub's VAPID key). The Silo's `notify` function resolves who should be
+alerted (e.g. a document's approvers) under the caller's JWT and relays to the
+Hub's `hub-push-relay`. See the Hub repo's `docs/Push-Notifications.md`.
 
 All AI keys live in **Supabase Vault**, configured per-silo by the owner in
 Settings → AI Assistant — there is no shared `GEMINI_API_KEY` env secret. The
