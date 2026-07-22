@@ -1449,3 +1449,14 @@ CREATE TABLE public.shipments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shipments_sales_order_id ON public.shipments (sales_order_id);
+
+-- =====================================================================
+-- SUPPLIER SCORECARDS: performance metrics on vendors
+-- Lead time, rating and on-time delivery ratio (auto-tracked when a PO is
+-- received vs its expected date), plus a preferred-supplier flag.
+-- =====================================================================
+ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS lead_time_days integer DEFAULT 0;
+ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS rating numeric DEFAULT 0;         -- 0..5
+ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS on_time_count integer DEFAULT 0;
+ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS delivery_count integer DEFAULT 0;
+ALTER TABLE public.vendors ADD COLUMN IF NOT EXISTS is_preferred boolean DEFAULT false;
