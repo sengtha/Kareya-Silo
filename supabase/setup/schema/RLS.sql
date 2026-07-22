@@ -859,3 +859,63 @@ CREATE POLICY "View optical rx" ON public.optical_prescriptions FOR SELECT TO au
 CREATE POLICY "Manage optical rx" ON public.optical_prescriptions FOR ALL TO authenticated USING (has_any_role(ARRAY['Optometrist','Manager'])) WITH CHECK (has_any_role(ARRAY['Optometrist','Manager']));
 CREATE POLICY "View optical orders" ON public.optical_orders FOR SELECT TO authenticated USING (has_any_role(ARRAY['Optometrist','Cashier','Accountant','Manager']));
 CREATE POLICY "Manage optical orders" ON public.optical_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Optometrist','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Optometrist','Cashier','Manager']));
+
+-- ---- veterinary ---------------------------------------------------------
+ALTER TABLE public.vet_patients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vet_visits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vet_vaccinations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View vet patients" ON public.vet_patients FOR SELECT TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage vet patients" ON public.vet_patients FOR ALL TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Manager'])) WITH CHECK (has_any_role(ARRAY['Veterinarian','Reception','Manager']));
+CREATE POLICY "View vet visits" ON public.vet_visits FOR SELECT TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage vet visits" ON public.vet_visits FOR ALL TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Veterinarian','Reception','Cashier','Manager']));
+CREATE POLICY "View vet vaccinations" ON public.vet_vaccinations FOR SELECT TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage vet vaccinations" ON public.vet_vaccinations FOR ALL TO authenticated USING (has_any_role(ARRAY['Veterinarian','Reception','Manager'])) WITH CHECK (has_any_role(ARRAY['Veterinarian','Reception','Manager']));
+
+-- ---- real-estate brokerage ----------------------------------------------
+ALTER TABLE public.brokerage_listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.brokerage_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.brokerage_viewings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View listings" ON public.brokerage_listings FOR SELECT TO authenticated USING (has_any_role(ARRAY['Broker','Accountant','Manager']));
+CREATE POLICY "Manage listings" ON public.brokerage_listings FOR ALL TO authenticated USING (has_any_role(ARRAY['Broker','Manager'])) WITH CHECK (has_any_role(ARRAY['Broker','Manager']));
+CREATE POLICY "View broker leads" ON public.brokerage_leads FOR SELECT TO authenticated USING (has_any_role(ARRAY['Broker','Accountant','Manager']));
+CREATE POLICY "Manage broker leads" ON public.brokerage_leads FOR ALL TO authenticated USING (has_any_role(ARRAY['Broker','Manager'])) WITH CHECK (has_any_role(ARRAY['Broker','Manager']));
+CREATE POLICY "View viewings" ON public.brokerage_viewings FOR SELECT TO authenticated USING (has_any_role(ARRAY['Broker','Accountant','Manager']));
+CREATE POLICY "Manage viewings" ON public.brokerage_viewings FOR ALL TO authenticated USING (has_any_role(ARRAY['Broker','Manager'])) WITH CHECK (has_any_role(ARRAY['Broker','Manager']));
+
+-- ---- gaming / internet café ---------------------------------------------
+ALTER TABLE public.gaming_stations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.gaming_sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View gaming stations" ON public.gaming_stations FOR SELECT TO authenticated USING (has_any_role(ARRAY['Attendant','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gaming stations" ON public.gaming_stations FOR ALL TO authenticated USING (has_any_role(ARRAY['Attendant','Manager'])) WITH CHECK (has_any_role(ARRAY['Attendant','Manager']));
+CREATE POLICY "View gaming sessions" ON public.gaming_sessions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Attendant','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage gaming sessions" ON public.gaming_sessions FOR ALL TO authenticated USING (has_any_role(ARRAY['Attendant','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Attendant','Cashier','Manager']));
+
+-- ---- parking ------------------------------------------------------------
+ALTER TABLE public.parking_zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.parking_sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View parking zones" ON public.parking_zones FOR SELECT TO authenticated USING (has_any_role(ARRAY['Parking Attendant','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage parking zones" ON public.parking_zones FOR ALL TO authenticated USING (has_any_role(ARRAY['Parking Attendant','Manager'])) WITH CHECK (has_any_role(ARRAY['Parking Attendant','Manager']));
+CREATE POLICY "View parking sessions" ON public.parking_sessions FOR SELECT TO authenticated USING (has_any_role(ARRAY['Parking Attendant','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage parking sessions" ON public.parking_sessions FOR ALL TO authenticated USING (has_any_role(ARRAY['Parking Attendant','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Parking Attendant','Cashier','Manager']));
+
+-- ---- funeral services ---------------------------------------------------
+ALTER TABLE public.funeral_packages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.funeral_cases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.funeral_case_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View funeral packages" ON public.funeral_packages FOR SELECT TO authenticated USING (has_any_role(ARRAY['Funeral Director','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage funeral packages" ON public.funeral_packages FOR ALL TO authenticated USING (has_any_role(ARRAY['Funeral Director','Manager'])) WITH CHECK (has_any_role(ARRAY['Funeral Director','Manager']));
+CREATE POLICY "View funeral cases" ON public.funeral_cases FOR SELECT TO authenticated USING (has_any_role(ARRAY['Funeral Director','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage funeral cases" ON public.funeral_cases FOR ALL TO authenticated USING (has_any_role(ARRAY['Funeral Director','Cashier','Manager'])) WITH CHECK (has_any_role(ARRAY['Funeral Director','Cashier','Manager']));
+CREATE POLICY "View funeral items" ON public.funeral_case_items FOR SELECT TO authenticated USING (has_any_role(ARRAY['Funeral Director','Cashier','Accountant','Manager']));
+CREATE POLICY "Manage funeral items" ON public.funeral_case_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Funeral Director','Manager'])) WITH CHECK (has_any_role(ARRAY['Funeral Director','Manager']));
+
+-- ---- insurance agency ---------------------------------------------------
+ALTER TABLE public.insurance_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.insurance_policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.insurance_claims ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View insurance products" ON public.insurance_products FOR SELECT TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Accountant','Manager']));
+CREATE POLICY "Manage insurance products" ON public.insurance_products FOR ALL TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Insurance Agent','Manager']));
+CREATE POLICY "View insurance policies" ON public.insurance_policies FOR SELECT TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Accountant','Manager']));
+CREATE POLICY "Manage insurance policies" ON public.insurance_policies FOR ALL TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Insurance Agent','Manager']));
+CREATE POLICY "View insurance claims" ON public.insurance_claims FOR SELECT TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Accountant','Manager']));
+CREATE POLICY "Manage insurance claims" ON public.insurance_claims FOR ALL TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Insurance Agent','Manager']));

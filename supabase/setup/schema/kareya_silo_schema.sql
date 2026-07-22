@@ -4093,3 +4093,282 @@ CREATE TABLE public.optical_orders (
 );
 CREATE INDEX IF NOT EXISTS idx_optical_orders_status ON public.optical_orders (status);
 CREATE INDEX IF NOT EXISTS idx_optical_prescriptions_patient ON public.optical_prescriptions (patient_name);
+
+-- =====================================================================
+-- VETERINARY CLINIC (animal patients, owners, visits, vaccinations)
+-- Distinct from the human Clinic EMR: the patient is an animal with an owner.
+-- =====================================================================
+CREATE TABLE public.vet_patients (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- animal name
+  species text,                              -- dog | cat | bird | cattle ...
+  breed text,
+  sex text,
+  date_of_birth date,
+  owner_name text,
+  owner_phone text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vet_patients_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.vet_visits (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  reason text,
+  diagnosis text,
+  treatment text,
+  fee numeric DEFAULT 0,
+  paid boolean DEFAULT false,
+  vet_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vet_visits_pkey PRIMARY KEY (id),
+  CONSTRAINT vet_visits_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.vet_patients(id) ON DELETE CASCADE,
+  CONSTRAINT vet_visits_vet_id_fkey FOREIGN KEY (vet_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.vet_vaccinations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  patient_id uuid NOT NULL,
+  vaccine text NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  next_due date,
+  vet_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT vet_vaccinations_pkey PRIMARY KEY (id),
+  CONSTRAINT vet_vaccinations_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.vet_patients(id) ON DELETE CASCADE,
+  CONSTRAINT vet_vaccinations_vet_id_fkey FOREIGN KEY (vet_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vet_visits_patient_id ON public.vet_visits (patient_id);
+CREATE INDEX IF NOT EXISTS idx_vet_vaccinations_patient_id ON public.vet_vaccinations (patient_id);
+CREATE INDEX IF NOT EXISTS idx_vet_vaccinations_next_due ON public.vet_vaccinations (next_due);
+
+-- =====================================================================
+-- REAL-ESTATE BROKERAGE (sale/rent listings, leads, viewings, commission)
+-- Distinct from Property/Rental (which manages the owner's OWN units): here
+-- the business brokers third-party properties and earns commission on close.
+-- =====================================================================
+CREATE TABLE public.brokerage_listings (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  listing_type text DEFAULT 'sale'::text,    -- sale | rent
+  property_type text DEFAULT 'house'::text,  -- house | apartment | land | shophouse | office
+  address text,
+  price numeric DEFAULT 0,
+  commission_pct numeric DEFAULT 0,
+  owner_name text,
+  owner_phone text,
+  bedrooms integer DEFAULT 0,
+  size_sqm numeric,
+  status text DEFAULT 'available'::text,      -- available | under_offer | closed | withdrawn
+  agent_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT brokerage_listings_pkey PRIMARY KEY (id),
+  CONSTRAINT brokerage_listings_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT brokerage_listings_type_check CHECK (listing_type = ANY (ARRAY['sale','rent'])),
+  CONSTRAINT brokerage_listings_status_check CHECK (status = ANY (ARRAY['available','under_offer','closed','withdrawn']))
+);
+
+CREATE TABLE public.brokerage_leads (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  listing_id uuid,
+  client_name text NOT NULL,
+  client_phone text,
+  status text DEFAULT 'new'::text,           -- new | viewing | offer | closed | lost
+  offer_amount numeric DEFAULT 0,
+  closed_amount numeric DEFAULT 0,           -- final price when closed
+  agent_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT brokerage_leads_pkey PRIMARY KEY (id),
+  CONSTRAINT brokerage_leads_listing_id_fkey FOREIGN KEY (listing_id) REFERENCES public.brokerage_listings(id) ON DELETE SET NULL,
+  CONSTRAINT brokerage_leads_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT brokerage_leads_status_check CHECK (status = ANY (ARRAY['new','viewing','offer','closed','lost']))
+);
+
+CREATE TABLE public.brokerage_viewings (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  listing_id uuid,
+  lead_id uuid,
+  scheduled_at timestamp with time zone,
+  agent_id uuid,
+  feedback text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT brokerage_viewings_pkey PRIMARY KEY (id),
+  CONSTRAINT brokerage_viewings_listing_id_fkey FOREIGN KEY (listing_id) REFERENCES public.brokerage_listings(id) ON DELETE CASCADE,
+  CONSTRAINT brokerage_viewings_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.brokerage_leads(id) ON DELETE SET NULL,
+  CONSTRAINT brokerage_viewings_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brokerage_leads_listing_id ON public.brokerage_leads (listing_id);
+CREATE INDEX IF NOT EXISTS idx_brokerage_viewings_listing_id ON public.brokerage_viewings (listing_id);
+
+-- =====================================================================
+-- GAMING / INTERNET CAFÉ (stations + time-based sessions)
+-- =====================================================================
+CREATE TABLE public.gaming_stations (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,                        -- e.g. 'PC-01'
+  type text DEFAULT 'pc'::text,              -- pc | console | vr | billiard
+  hourly_rate numeric DEFAULT 0,
+  status text DEFAULT 'available'::text,      -- available | occupied | maintenance
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gaming_stations_pkey PRIMARY KEY (id),
+  CONSTRAINT gaming_stations_status_check CHECK (status = ANY (ARRAY['available','occupied','maintenance']))
+);
+
+CREATE TABLE public.gaming_sessions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  station_id uuid NOT NULL,
+  customer_name text,
+  start_time timestamp with time zone DEFAULT now(),
+  end_time timestamp with time zone,
+  minutes integer DEFAULT 0,
+  hourly_rate numeric DEFAULT 0,             -- snapshot of the station rate
+  amount numeric DEFAULT 0,
+  status text DEFAULT 'active'::text,        -- active | closed
+  paid boolean DEFAULT false,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT gaming_sessions_pkey PRIMARY KEY (id),
+  CONSTRAINT gaming_sessions_station_id_fkey FOREIGN KEY (station_id) REFERENCES public.gaming_stations(id) ON DELETE CASCADE,
+  CONSTRAINT gaming_sessions_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT gaming_sessions_status_check CHECK (status = ANY (ARRAY['active','closed']))
+);
+CREATE INDEX IF NOT EXISTS idx_gaming_sessions_station_id ON public.gaming_sessions (station_id);
+CREATE INDEX IF NOT EXISTS idx_gaming_sessions_status ON public.gaming_sessions (status);
+
+-- =====================================================================
+-- PARKING MANAGEMENT (zones + entry/exit sessions)
+-- Fee = hourly_rate × hours (rounded up), capped by optional flat_rate.
+-- =====================================================================
+CREATE TABLE public.parking_zones (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  capacity integer DEFAULT 0,
+  hourly_rate numeric DEFAULT 0,
+  flat_rate numeric DEFAULT 0,               -- daily cap; 0 = no cap
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT parking_zones_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.parking_sessions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  ticket_number text,
+  zone_id uuid,
+  plate text,
+  vehicle_type text DEFAULT 'car'::text,     -- car | moto | truck
+  entry_time timestamp with time zone DEFAULT now(),
+  exit_time timestamp with time zone,
+  fee numeric DEFAULT 0,
+  status text DEFAULT 'parked'::text,        -- parked | exited
+  paid boolean DEFAULT false,
+  staff_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT parking_sessions_pkey PRIMARY KEY (id),
+  CONSTRAINT parking_sessions_zone_id_fkey FOREIGN KEY (zone_id) REFERENCES public.parking_zones(id) ON DELETE SET NULL,
+  CONSTRAINT parking_sessions_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT parking_sessions_status_check CHECK (status = ANY (ARRAY['parked','exited']))
+);
+CREATE INDEX IF NOT EXISTS idx_parking_sessions_status ON public.parking_sessions (status);
+CREATE INDEX IF NOT EXISTS idx_parking_sessions_plate ON public.parking_sessions (plate);
+
+-- =====================================================================
+-- FUNERAL SERVICES (packages + cases/arrangements + line items)
+-- =====================================================================
+CREATE TABLE public.funeral_packages (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  price numeric DEFAULT 0,
+  description text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT funeral_packages_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.funeral_cases (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  case_number text,
+  deceased_name text NOT NULL,
+  family_contact text,
+  contact_phone text,
+  package_id uuid,
+  service_date date,
+  venue text,
+  status text DEFAULT 'inquiry'::text,       -- inquiry | arranged | in_service | completed | cancelled
+  total numeric DEFAULT 0,
+  paid_amount numeric DEFAULT 0,
+  director_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT funeral_cases_pkey PRIMARY KEY (id),
+  CONSTRAINT funeral_cases_package_id_fkey FOREIGN KEY (package_id) REFERENCES public.funeral_packages(id) ON DELETE SET NULL,
+  CONSTRAINT funeral_cases_director_id_fkey FOREIGN KEY (director_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT funeral_cases_status_check CHECK (status = ANY (ARRAY['inquiry','arranged','in_service','completed','cancelled']))
+);
+
+CREATE TABLE public.funeral_case_items (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  case_id uuid NOT NULL,
+  description text NOT NULL,
+  cost numeric DEFAULT 0,
+  price numeric DEFAULT 0,
+  CONSTRAINT funeral_case_items_pkey PRIMARY KEY (id),
+  CONSTRAINT funeral_case_items_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.funeral_cases(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_funeral_case_items_case_id ON public.funeral_case_items (case_id);
+
+-- =====================================================================
+-- INSURANCE AGENCY (products, policies with premium+commission, claims)
+-- =====================================================================
+CREATE TABLE public.insurance_products (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  type text DEFAULT 'life'::text,            -- life | health | motor | property | travel
+  provider text,
+  default_commission_pct numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT insurance_products_pkey PRIMARY KEY (id),
+  CONSTRAINT insurance_products_type_check CHECK (type = ANY (ARRAY['life','health','motor','property','travel']))
+);
+
+CREATE TABLE public.insurance_policies (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  policy_number text,
+  product_id uuid,
+  client_name text NOT NULL,
+  client_phone text,
+  premium numeric DEFAULT 0,
+  frequency text DEFAULT 'annual'::text,     -- monthly | quarterly | annual | single
+  commission_pct numeric DEFAULT 0,
+  sum_insured numeric DEFAULT 0,
+  start_date date,
+  end_date date,
+  status text DEFAULT 'active'::text,        -- active | lapsed | cancelled | expired
+  agent_id uuid,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT insurance_policies_pkey PRIMARY KEY (id),
+  CONSTRAINT insurance_policies_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.insurance_products(id) ON DELETE SET NULL,
+  CONSTRAINT insurance_policies_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT insurance_policies_status_check CHECK (status = ANY (ARRAY['active','lapsed','cancelled','expired']))
+);
+
+CREATE TABLE public.insurance_claims (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  claim_number text,
+  policy_id uuid NOT NULL,
+  date date DEFAULT CURRENT_DATE,
+  description text,
+  amount numeric DEFAULT 0,
+  status text DEFAULT 'filed'::text,         -- filed | approved | paid | rejected
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT insurance_claims_pkey PRIMARY KEY (id),
+  CONSTRAINT insurance_claims_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.insurance_policies(id) ON DELETE CASCADE,
+  CONSTRAINT insurance_claims_status_check CHECK (status = ANY (ARRAY['filed','approved','paid','rejected']))
+);
+CREATE INDEX IF NOT EXISTS idx_insurance_policies_product_id ON public.insurance_policies (product_id);
+CREATE INDEX IF NOT EXISTS idx_insurance_policies_status ON public.insurance_policies (status);
+CREATE INDEX IF NOT EXISTS idx_insurance_claims_policy_id ON public.insurance_claims (policy_id);
