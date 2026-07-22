@@ -260,3 +260,9 @@ CREATE POLICY "View expense claims" ON public.expense_claims FOR SELECT TO authe
 CREATE POLICY "File own expense claim" ON public.expense_claims FOR INSERT TO authenticated WITH CHECK (employee_id = current_employee_id() OR has_any_role(ARRAY['Accountant','Manager']));
 CREATE POLICY "Update expense claims" ON public.expense_claims FOR UPDATE TO authenticated USING (has_any_role(ARRAY['Accountant','Manager']) OR (employee_id = current_employee_id() AND status = 'pending'));
 CREATE POLICY "Delete own expense claim" ON public.expense_claims FOR DELETE TO authenticated USING ((employee_id = current_employee_id() AND status = 'pending') OR has_any_role(ARRAY['Accountant']));
+
+-- ---- recurring invoices -----------------------------------------------
+ALTER TABLE public.recurring_invoices ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View recurring" ON public.recurring_invoices FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant','Sales Lead']));
+CREATE POLICY "Manage recurring" ON public.recurring_invoices FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));

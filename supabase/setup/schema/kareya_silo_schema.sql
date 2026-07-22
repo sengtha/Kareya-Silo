@@ -1079,3 +1079,26 @@ CREATE TABLE public.expense_claims (
 );
 
 CREATE INDEX IF NOT EXISTS idx_expense_claims_employee_id ON public.expense_claims (employee_id);
+
+-- =====================================================================
+-- RECURRING INVOICES: templates that generate invoices on a schedule
+-- =====================================================================
+CREATE TABLE public.recurring_invoices (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title text NOT NULL,
+  client_id uuid,
+  frequency text DEFAULT 'monthly'::text,   -- weekly | monthly | quarterly | yearly
+  next_run date DEFAULT CURRENT_DATE,
+  tax_rate numeric DEFAULT 0,
+  discount numeric DEFAULT 0,
+  amount numeric DEFAULT 0,
+  items jsonb DEFAULT '[]'::jsonb,          -- [{description, quantity, price}]
+  status text DEFAULT 'active'::text,       -- active | paused | ended
+  last_generated date,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT recurring_invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT recurring_invoices_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE SET NULL,
+  CONSTRAINT recurring_invoices_frequency_check CHECK (frequency = ANY (ARRAY['weekly','monthly','quarterly','yearly'])),
+  CONSTRAINT recurring_invoices_status_check CHECK (status = ANY (ARRAY['active','paused','ended']))
+);
