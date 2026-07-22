@@ -1128,3 +1128,46 @@ CREATE TABLE public.depreciation_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset_id ON public.depreciation_entries (asset_id);
+
+-- =====================================================================
+-- MULTI-CURRENCY (Cambodia runs dual USD + KHR)
+-- The ledger is kept in ONE base currency (USD by default). Money-bearing
+-- documents store their own `currency` plus an `exchange_rate` snapshot =
+-- units of that currency per 1 unit of base. So base_amount = amount / rate.
+-- USD (base): rate 1.  KHR: rate ~4100 (1 USD = 4100 KHR).
+-- =====================================================================
+CREATE TABLE public.currencies (
+  code text NOT NULL,                    -- ISO 4217, e.g. USD, KHR
+  name text NOT NULL,
+  symbol text DEFAULT '$'::text,
+  rate_to_base numeric DEFAULT 1,        -- units of this currency per 1 base unit
+  is_base boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  decimals integer DEFAULT 2,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT currencies_pkey PRIMARY KEY (code)
+);
+
+-- Money-bearing documents carry their transaction currency + rate snapshot.
+ALTER TABLE public.invoices        ADD COLUMN IF NOT EXISTS currency text DEFAULT 'USD';
+ALTER TABLE public.invoices        ADD COLUMN IF NOT EXISTS exchange_rate numeric DEFAULT 1;
+ALTER TABLE public.bills           ADD COLUMN IF NOT EXISTS currency text DEFAULT 'USD';
+ALTER TABLE public.bills           ADD COLUMN IF NOT EXISTS exchange_rate numeric DEFAULT 1;
+ALTER TABLE public.quotes          ADD COLUMN IF NOT EXISTS currency text DEFAULT 'USD';
+ALTER TABLE public.quotes          ADD COLUMN IF NOT EXISTS exchange_rate numeric DEFAULT 1;
+ALTER TABLE public.expense_claims  ADD COLUMN IF NOT EXISTS currency text DEFAULT 'USD';
+ALTER TABLE public.expense_claims  ADD COLUMN IF NOT EXISTS exchange_rate numeric DEFAULT 1;
+ALTER TABLE public.purchase_orders ADD COLUMN IF NOT EXISTS currency text DEFAULT 'USD';
+ALTER TABLE public.purchase_orders ADD COLUMN IF NOT EXISTS exchange_rate numeric DEFAULT 1;
+
+-- seed_currencies: idempotently install USD (base) + KHR for Cambodia.
+CREATE OR REPLACE FUNCTION public.seed_currencies()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  INSERT INTO currencies (code, name, symbol, rate_to_base, is_base, decimals) VALUES
+    ('USD', 'US Dollar', '$', 1, true, 2),
+    ('KHR', 'Cambodian Riel', '៛', 4100, false, 0)
+  ON CONFLICT (code) DO NOTHING;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.seed_currencies() TO authenticated;

@@ -272,3 +272,9 @@ ALTER TABLE public.depreciation_entries ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View depreciation" ON public.depreciation_entries FOR SELECT TO authenticated USING (has_any_role(ARRAY['Accountant']));
 CREATE POLICY "Manage depreciation" ON public.depreciation_entries FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
+
+-- ---- multi-currency ---------------------------------------------------
+ALTER TABLE public.currencies ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View currencies" ON public.currencies FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage currencies" ON public.currencies FOR ALL TO authenticated USING (has_any_role(ARRAY['Accountant'])) WITH CHECK (has_any_role(ARRAY['Accountant']));
