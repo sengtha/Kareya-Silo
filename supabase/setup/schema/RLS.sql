@@ -327,3 +327,15 @@ CREATE POLICY "View sales orders" ON public.sales_orders FOR SELECT TO authentic
 CREATE POLICY "Manage sales orders" ON public.sales_orders FOR ALL TO authenticated USING (has_any_role(ARRAY['Sales Lead','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Sales Lead','Accountant','Manager']));
 CREATE POLICY "View SO items" ON public.sales_order_items FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Manage SO items" ON public.sales_order_items FOR ALL TO authenticated USING (has_any_role(ARRAY['Sales Lead','Accountant','Manager'])) WITH CHECK (has_any_role(ARRAY['Sales Lead','Accountant','Manager']));
+
+-- ---- warehouses & transfers -------------------------------------------
+ALTER TABLE public.warehouses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_levels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_transfers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View warehouses" ON public.warehouses FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage warehouses" ON public.warehouses FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View stock levels" ON public.stock_levels FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage stock levels" ON public.stock_levels FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));
+CREATE POLICY "View stock transfers" ON public.stock_transfers FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage stock transfers" ON public.stock_transfers FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager','Accountant'])) WITH CHECK (has_any_role(ARRAY['Manager','Accountant']));

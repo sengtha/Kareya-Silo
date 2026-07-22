@@ -1380,3 +1380,47 @@ CREATE TABLE public.sales_order_items (
 
 CREATE INDEX IF NOT EXISTS idx_sales_orders_client_id ON public.sales_orders (client_id);
 CREATE INDEX IF NOT EXISTS idx_sales_order_items_so_id ON public.sales_order_items (so_id);
+
+-- =====================================================================
+-- WAREHOUSES & STOCK TRANSFERS (multi-location inventory)
+-- stock_levels tracks on-hand per (item, warehouse); transfers move
+-- quantity between locations (a null from = opening/receipt, null to = out).
+-- =====================================================================
+CREATE TABLE public.warehouses (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  code text,
+  address text,
+  is_default boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT warehouses_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.stock_levels (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  item_id uuid,
+  warehouse_id uuid,
+  quantity numeric DEFAULT 0,
+  CONSTRAINT stock_levels_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_levels_item_wh_key UNIQUE (item_id, warehouse_id),
+  CONSTRAINT stock_levels_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  CONSTRAINT stock_levels_warehouse_id_fkey FOREIGN KEY (warehouse_id) REFERENCES public.warehouses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.stock_transfers (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  item_id uuid,
+  from_warehouse_id uuid,
+  to_warehouse_id uuid,
+  quantity numeric NOT NULL DEFAULT 0,
+  date date DEFAULT CURRENT_DATE,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT stock_transfers_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_transfers_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  CONSTRAINT stock_transfers_from_fkey FOREIGN KEY (from_warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL,
+  CONSTRAINT stock_transfers_to_fkey FOREIGN KEY (to_warehouse_id) REFERENCES public.warehouses(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_levels_warehouse_id ON public.stock_levels (warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transfers_item_id ON public.stock_transfers (item_id);
