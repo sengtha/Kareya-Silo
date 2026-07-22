@@ -1,11 +1,21 @@
 // ai-ingest — turn a source document into embedded, searchable chunks.
 // Accepts inline text, or a path to a file in the 'kb-sources' Storage bucket
-// (text/markdown/plain). Chunks the content, embeds each chunk with Gemini,
-// and writes rows to kb_chunks. Runs with the service role.
+// (text/markdown/plain, or PDF). Chunks the content, embeds each chunk with
+// Gemini, and writes rows to kb_chunks. Runs with the service role.
 //
-// NOTE: PDF/Docx extraction is intentionally out of scope here — send extracted
-// text, or pre-convert. A follow-up can add a parser (e.g. unpdf) for binaries.
+// PDFs are extracted to text with unpdf (a Deno-friendly PDF.js build). Other
+// binaries (Office docs, images) are still rejected — pre-convert to text/PDF.
 import { createClient } from 'npm:@supabase/supabase-js@2.39.3'
+import { extractText, getDocumentProxy } from 'npm:unpdf@0.11.0'
+
+// Pull readable text out of a PDF's bytes. mergePages joins every page into one
+// string; we normalise the whitespace so the chunker sees clean paragraphs.
+async function extractPdfText(bytes: Uint8Array): Promise<string> {
+  const pdf = await getDocumentProxy(bytes)
+  const { text } = await extractText(pdf, { mergePages: true })
+  const joined = Array.isArray(text) ? text.join('\n\n') : String(text || '')
+  return joined.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,10 +84,16 @@ Deno.serve(async (req: Request) => {
       const { data: file, error } = await admin.storage.from('kb-sources').download(storage_path)
       if (error || !file) throw new Error(`Storage download failed: ${error?.message || 'not found'}`)
       mime = file.type || 'text/plain'
-      if (mime.includes('pdf') || mime.includes('officedocument') || mime.startsWith('image/')) {
-        throw new Error(`Unsupported binary type for ingest: ${mime}. Send extracted text instead.`)
+      if (mime.includes('pdf') || storage_path.toLowerCase().endsWith('.pdf')) {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        text = await extractPdfText(bytes)
+        mime = 'application/pdf'
+        if (!text.trim()) throw new Error('No extractable text in PDF (it may be a scanned image — run OCR first).')
+      } else if (mime.includes('officedocument') || mime.startsWith('image/')) {
+        throw new Error(`Unsupported binary type for ingest: ${mime}. Send extracted text or a PDF instead.`)
+      } else {
+        text = await file.text()
       }
-      text = await file.text()
     }
     if (!text || !text.trim()) throw new Error('No text to ingest (provide text or a text/markdown storage_path)')
 

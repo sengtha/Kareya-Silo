@@ -2,8 +2,12 @@
 // caller's RLS-scoped Supabase client (userClient) or the RAG search RPC, so
 // the assistant can never read data the user couldn't read themselves.
 //
-// All tools here are READ-ONLY. Write tools (create invoice, approve document…)
-// should be added the same way but routed through the existing RPCs.
+// Read tools query tables directly (RLS filters the rows). Write tools MUST be
+// routed through an existing SECURITY DEFINER RPC that re-enforces the same
+// authorization the UI relies on — never a raw table mutation. process_document
+// below is the reference: the RPC itself checks the caller is an employee, is
+// not actioning their own request, and holds a role allowed at the current
+// workflow step, so the assistant can approve nothing the user couldn't.
 
 export interface ToolCtx {
   userClient: any
@@ -98,6 +102,61 @@ export function buildTools(ctx: ToolCtx): ToolDef[] {
       const invoiced = rows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0)
       const paid = rows.filter((r: any) => r.status === 'paid').reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0)
       return { since, invoiced_total: invoiced, paid_total: paid, invoice_count: rows.length }
+    },
+  })
+
+  // ─── Document-approval workflow (read + guarded write) ───────────────────
+  tools.push({
+    name: 'list_document_requests',
+    description:
+      'List document requests visible to the user (RLS-scoped). Use before approving/rejecting so you have the exact request id and can confirm it is awaiting approval. Optionally filter by status (pending, approved, rejected, returned).',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['pending', 'approved', 'rejected', 'returned'],
+          description: 'Filter to one status. Omit to list the most recent across all statuses.',
+        },
+      },
+      required: [],
+    },
+    run: async ({ status }: { status?: string }) => {
+      let q = ctx.userClient
+        .from('document_requests')
+        .select('id, title, status, current_step_order, requester_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (status) q = q.eq('status', status)
+      const { data, error } = await q
+      if (error) return { error: error.message }
+      return { count: data?.length || 0, requests: data }
+    },
+  })
+
+  tools.push({
+    name: 'process_document_request',
+    description:
+      "Advance a document request through its approval workflow. action must be one of: approve, reject, return, resubmit. This performs a REAL state change. The workflow rules are enforced server-side — you may only act on a request the user is authorized to action (the user cannot approve their own request, and must hold a role allowed at the current step); if not, this returns an error. Always call list_document_requests first to obtain the id and confirm the request is still pending. Only call this when the user has clearly asked to approve/reject/return/resubmit a specific document.",
+    parameters: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string', description: 'The document request id (UUID) from list_document_requests.' },
+        action: { type: 'string', enum: ['approve', 'reject', 'return', 'resubmit'], description: 'The workflow transition to apply.' },
+        comment: { type: 'string', description: 'Optional note recorded in the approval history.' },
+      },
+      required: ['document_id', 'action'],
+    },
+    run: async ({ document_id, action, comment }: { document_id: string; action: string; comment?: string }) => {
+      // Routed through the SECURITY DEFINER RPC under the caller's JWT, so the
+      // same role/ownership checks the UI relies on apply here unchanged.
+      const { data, error } = await ctx.userClient.rpc('process_document', {
+        p_doc_id: document_id,
+        p_action: action,
+        p_comment: comment || '',
+      })
+      if (error) return { error: error.message }
+      return { ok: true, id: data?.id, title: data?.title, status: data?.status, current_step_order: data?.current_step_order }
     },
   })
 

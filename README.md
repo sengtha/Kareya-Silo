@@ -39,8 +39,16 @@ supabase/setup/
     RLS.sql                  Row Level Security policies
   functions/
     authenticate-hub-user/   redeems a Hub ticket → mints the Silo JWT
-    gemini-ai/               local AI (chat, templates, OCR, job desc, schedule)
+    ai-chat/                 assistant: provider-agnostic chat + tools + RAG
+    ai-generate/             one-shot AI helpers (text, doc OCR/templates, etc.)
+    ai-ingest/               chunk + embed knowledge-base sources (incl. PDF)
+    ai-embed/                Gemini batch embeddings
 ```
+
+All AI keys live in **Supabase Vault**, configured per-silo by the owner in
+Settings → AI Assistant — there is no shared `GEMINI_API_KEY` env secret. The
+provider (Claude / OpenAI / Gemini) is the owner's choice; embeddings always use
+Gemini. Every AI query runs under the caller's JWT, so RLS binds.
 
 ## Setup
 
@@ -57,10 +65,14 @@ Run, in order, against your Silo project (SQL editor or `psql`):
 ### 3. Deploy the edge functions
 ```
 supabase functions deploy authenticate-hub-user --no-verify-jwt
-supabase functions deploy gemini-ai
+supabase functions deploy ai-chat
+supabase functions deploy ai-generate
+supabase functions deploy ai-ingest
+supabase functions deploy ai-embed
 ```
 `authenticate-hub-user` must be public (`--no-verify-jwt`): it is called with a
-raw ticket, before any Silo session exists.
+raw ticket, before any Silo session exists. The AI functions verify the caller's
+Silo JWT, so deploy them with JWT verification on (the default).
 
 ### 4. Configure edge-function secrets
 
@@ -71,11 +83,15 @@ raw ticket, before any Silo session exists.
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Admin key, used only to provision the employee roster on first entry. Never exposed to clients. |
 | `HUB_URL` | ⛳ | The Kareya Hub Supabase URL. Defaults to the official Hub if unset. |
 | `HUB_ANON_KEY` | ✅ | The Kareya Hub's anon/publishable key, so this Silo can call `redeem_silo_ticket` on the Hub. |
-| `GEMINI_API_KEY` | optional | Google Gemini key for the `gemini-ai` function. |
+| `SUPABASE_ANON_KEY` | ✅ | This Silo's anon key (usually injected automatically). The AI functions use it to build a JWT-scoped client so RLS applies. |
 
 ```
-supabase secrets set SILO_JWT_SECRET=... HUB_ANON_KEY=... GEMINI_API_KEY=...
+supabase secrets set SILO_JWT_SECRET=... HUB_ANON_KEY=...
 ```
+
+> **AI provider keys are not env secrets.** They are stored encrypted in Supabase
+> Vault and set by the silo owner in the app (Settings → AI Assistant), so each
+> business supplies its own Claude / OpenAI / Gemini key.
 
 ### 5. Register the Silo on the Hub
 In the Kareya Hub, create a `user_silos` row (name + this project's URL +
