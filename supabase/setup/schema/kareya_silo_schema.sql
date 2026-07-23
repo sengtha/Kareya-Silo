@@ -4605,3 +4605,44 @@ CREATE TABLE public.workspace_config (
   CONSTRAINT workspace_config_pkey PRIMARY KEY (id),
   CONSTRAINT workspace_config_singleton CHECK (id = true)
 );
+
+-- =====================================================================
+-- CROSS-APP ANALYTICS — read-only business KPIs for the Normsar
+-- "Kareya Insights" panel. Returns AGGREGATES ONLY (no row-level data),
+-- guarded to owners/admins. A Normsar user who is also an admin/founder
+-- here (same Google identity, via a Kareya passport) calls this to see
+-- their business at a glance inside Normsar. Amounts are summed in the
+-- document currency as stored (base-currency assumption for the headline).
+-- =====================================================================
+CREATE OR REPLACE FUNCTION public.get_business_analytics()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_month_start date := date_trunc('month', current_date)::date;
+  result jsonb;
+BEGIN
+  IF NOT is_admin_or_founder() THEN
+    RAISE EXCEPTION 'Not authorized';
+  END IF;
+
+  SELECT jsonb_build_object(
+    'generated_at', now(),
+    'ar_outstanding',   COALESCE((SELECT sum(amount) FROM invoices WHERE status IN ('pending','overdue')), 0),
+    'ar_overdue',       COALESCE((SELECT sum(amount) FROM invoices WHERE status <> 'paid' AND due_date IS NOT NULL AND due_date < current_date), 0),
+    'ap_outstanding',   COALESCE((SELECT sum(amount) FROM bills WHERE status IN ('unpaid','partial')), 0),
+    'sales_mtd',        COALESCE((SELECT sum(amount) FROM invoices WHERE date >= v_month_start), 0),
+    'sales_paid_mtd',   COALESCE((SELECT sum(amount) FROM invoices WHERE status = 'paid' AND date >= v_month_start), 0),
+    'invoices_unpaid',  COALESCE((SELECT count(*) FROM invoices WHERE status IN ('pending','overdue')), 0),
+    'headcount',        COALESCE((SELECT count(*) FROM employees WHERE status = 'active'), 0),
+    'low_stock_items',  COALESCE((SELECT count(*) FROM stock_items WHERE reorder_level > 0 AND quantity <= reorder_level), 0),
+    'inventory_value',  COALESCE((SELECT sum(quantity * cost_price) FROM stock_items), 0)
+  ) INTO result;
+
+  RETURN result;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.get_business_analytics() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_business_analytics() TO authenticated;
