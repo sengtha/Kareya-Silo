@@ -922,6 +922,8 @@ BEGIN
     ('1500', 'Accumulated Depreciation', 'asset', 'contra', false),
     ('2000', 'Accounts Payable', 'liability', 'payable', true),
     ('2100', 'Tax Payable', 'liability', 'tax', true),
+    ('2110', 'NSSF Payable', 'liability', 'payable', false),
+    ('2120', 'Seniority Indemnity Provision', 'liability', 'payable', false),
     ('3000', 'Owner Equity', 'equity', 'equity', true),
     ('3100', 'Retained Earnings', 'equity', 'retained', true),
     ('4000', 'Sales Revenue', 'income', 'sales', true),
@@ -1012,9 +1014,16 @@ CREATE TABLE public.payslips (
   base_salary numeric DEFAULT 0,
   allowances numeric DEFAULT 0,
   gross numeric DEFAULT 0,
-  tax numeric DEFAULT 0,
+  tax numeric DEFAULT 0,                 -- Tax on Salary (ToS), progressive
   other_deductions numeric DEFAULT 0,
   net numeric DEFAULT 0,
+  -- Cambodia statutory payroll (auto-computed):
+  nssf_employee numeric DEFAULT 0,       -- employee NSSF (pension + health), deducted from net
+  nssf_employer numeric DEFAULT 0,       -- employer NSSF (pension + health + occupational risk)
+  dependents integer DEFAULT 0,          -- spouse/children for ToS relief
+  taxable numeric DEFAULT 0,             -- taxable base after relief (in KHR)
+  seniority_accrual numeric DEFAULT 0,   -- monthly seniority-indemnity accrual (employer)
+  currency text DEFAULT 'KHR'::text,
   status text DEFAULT 'draft'::text,    -- draft | paid
   notes text,
   created_at timestamp with time zone DEFAULT now(),
