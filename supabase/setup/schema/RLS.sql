@@ -724,17 +724,38 @@ CREATE POLICY "Manage kb chunks" ON public.kb_chunks FOR ALL TO authenticated US
 -- =====================================================================
 -- STORAGE — per-silo media. Objects are readable/writable only by employees
 -- of this silo. 'kb-sources' holds AI source documents (owner-curated);
--- 'silo-media' is the general media bucket (rename to your bucket if different).
+-- 'silo-media' is the general media bucket.
+--
+-- Guarded + idempotent: on a self-hosted stack the storage schema is created
+-- at runtime, after Postgres init, so this whole block no-ops during db-init
+-- and the docker storage-init one-shot (docker/volumes/db/kareya-storage.sql,
+-- which mirrors these policies exactly) applies them once storage is ready.
+-- On hosted Supabase storage exists, so they apply inline as before.
 -- =====================================================================
-CREATE POLICY "Employees read kb-sources" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'kb-sources' AND is_employee());
-CREATE POLICY "Owners/curators write kb-sources" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
-CREATE POLICY "Owners/curators update kb-sources" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
-CREATE POLICY "Owners/curators delete kb-sources" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager']));
-
-CREATE POLICY "Employees read silo-media" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'silo-media' AND is_employee());
-CREATE POLICY "Employees write silo-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'silo-media' AND is_employee());
-CREATE POLICY "Employees update silo-media" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) WITH CHECK (bucket_id = 'silo-media' AND is_employee());
-CREATE POLICY "Employees delete silo-media" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'silo-media' AND is_employee());
+DO $storage_rls$
+BEGIN
+  IF to_regclass('storage.objects') IS NULL THEN
+    RAISE NOTICE 'storage.objects not present yet — storage policies deferred to the storage-init one-shot';
+    RETURN;
+  END IF;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Employees read kb-sources" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Employees read kb-sources" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'kb-sources' AND is_employee()) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Owners/curators write kb-sources" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Owners/curators write kb-sources" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Owners/curators update kb-sources" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Owners/curators update kb-sources" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) WITH CHECK (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Owners/curators delete kb-sources" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Owners/curators delete kb-sources" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'kb-sources' AND has_any_role(ARRAY['Support','Manager'])) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Employees read silo-media" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Employees read silo-media" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Employees write silo-media" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Employees write silo-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'silo-media' AND is_employee()) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Employees update silo-media" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Employees update silo-media" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) WITH CHECK (bucket_id = 'silo-media' AND is_employee()) $p$;
+  EXECUTE $p$ DROP POLICY IF EXISTS "Employees delete silo-media" ON storage.objects $p$;
+  EXECUTE $p$ CREATE POLICY "Employees delete silo-media" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'silo-media' AND is_employee()) $p$;
+END
+$storage_rls$;
 
 -- =====================================================================
 -- E-SIGNATURE

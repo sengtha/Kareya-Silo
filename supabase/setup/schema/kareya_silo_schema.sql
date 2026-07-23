@@ -3418,9 +3418,18 @@ GRANT EXECUTE ON FUNCTION public.match_kb_chunks(vector, integer, double precisi
 
 -- Private bucket for documents the owner feeds the assistant. Existing media
 -- buckets can also be ingested; this one is dedicated to AI source material.
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('kb-sources', 'kb-sources', false)
-ON CONFLICT (id) DO NOTHING;
+-- Guarded: on a self-hosted stack the storage schema is created at runtime,
+-- after Postgres init, so this no-ops during db-init and the docker
+-- storage-init one-shot (docker/volumes/db/kareya-storage.sql) creates the
+-- bucket once storage is ready. On hosted Supabase storage exists, so it runs.
+DO $$
+BEGIN
+  IF to_regclass('storage.buckets') IS NOT NULL THEN
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('kb-sources', 'kb-sources', false)
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
 
 -- Service-role-only bridge for edge functions to read a decrypted key from
 -- Vault. NOT callable by authenticated/anon — only the ai-* edge functions
