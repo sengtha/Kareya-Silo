@@ -80,7 +80,14 @@ supabase functions deploy esign-public --no-verify-jwt
 supabase functions deploy esign-xades
 supabase functions deploy connect-inbound --no-verify-jwt
 supabase functions deploy connect-send
+supabase functions deploy create-payment
+supabase functions deploy payment-webhook --no-verify-jwt
 ```
+`payment-webhook` must be public (`--no-verify-jwt`): the bank / PSP calls it
+with no Silo session — the shared `x-webhook-secret` (production: the PSP's HMAC
+signature) is the credential. It is the ONLY path that marks a fee paid, so
+payment state can never be forged from a client. `create-payment` verifies the
+caller's Silo JWT (only employees request a fee).
 `authenticate-hub-user` must be public (`--no-verify-jwt`): it is called with a
 raw ticket, before any Silo session exists. `esign-public` must also be public:
 external customers open it from a tokenized signing link with no Silo session —

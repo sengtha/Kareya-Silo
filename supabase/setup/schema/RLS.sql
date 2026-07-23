@@ -938,3 +938,27 @@ CREATE POLICY "Create connect requests" ON public.connect_requests FOR INSERT TO
 CREATE POLICY "Update connect requests" ON public.connect_requests FOR UPDATE TO authenticated USING (is_employee()) WITH CHECK (is_employee());
 CREATE POLICY "View connect messages" ON public.connect_messages FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Append connect messages" ON public.connect_messages FOR INSERT TO authenticated WITH CHECK (is_employee());
+
+-- ---- form & workflow builder --------------------------------------------
+-- Forms are designed by Manager/Admin; all employees see published ones.
+-- Submissions: any employee can create and view; approvers advance them (step
+-- role gating is enforced in-app; RLS keeps it inside the Silo). Events are
+-- append-only.
+ALTER TABLE public.form_defs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.form_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.form_submission_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View form defs" ON public.form_defs FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage form defs" ON public.form_defs FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager'])) WITH CHECK (has_any_role(ARRAY['Manager']));
+CREATE POLICY "View form submissions" ON public.form_submissions FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Create form submissions" ON public.form_submissions FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "Update form submissions" ON public.form_submissions FOR UPDATE TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View form submission events" ON public.form_submission_events FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Append form submission events" ON public.form_submission_events FOR INSERT TO authenticated WITH CHECK (is_employee());
+
+-- ---- payment provider config --------------------------------------------
+-- Non-secret fields readable by employees (screens need to know the provider);
+-- only the owner changes it. The api key lives in Vault (api_key_ref), never
+-- readable here.
+ALTER TABLE public.payment_config ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View payment config" ON public.payment_config FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Owner manages payment config" ON public.payment_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());

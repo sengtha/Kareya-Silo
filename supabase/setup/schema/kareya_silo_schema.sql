@@ -4457,3 +4457,112 @@ CREATE INDEX IF NOT EXISTS idx_connect_requests_direction ON public.connect_requ
 CREATE INDEX IF NOT EXISTS idx_connect_requests_partner_id ON public.connect_requests (partner_id);
 CREATE INDEX IF NOT EXISTS idx_connect_requests_external_ref ON public.connect_requests (external_ref);
 CREATE INDEX IF NOT EXISTS idx_connect_messages_request_id ON public.connect_messages (request_id);
+
+-- =====================================================================
+-- FORM & WORKFLOW BUILDER — low-code services
+-- An org defines a FORM (typed fields) + a WORKFLOW (ordered steps: approval /
+-- payment / notify) + an optional fee, and publishes it as a service. Anyone
+-- can then submit that form once; the submission walks the workflow. This is
+-- the "each org designs its own form based on its existing process, citizen/
+-- partner applies once, it routes through the steps" pattern — internal today,
+-- and the same definition drives Connect requests across Silos.
+-- schema/workflow are jsonb so no migration is needed to add a field or step.
+-- =====================================================================
+CREATE TABLE public.form_defs (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  name text NOT NULL,
+  description text,
+  category text DEFAULT 'general'::text,
+  schema jsonb DEFAULT '[]'::jsonb,          -- FormField[]: {key,label,type,required,options,...}
+  workflow jsonb DEFAULT '[]'::jsonb,        -- WorkflowStep[]: {id,name,type,allowedRoles,...}
+  fee_amount numeric DEFAULT 0,
+  fee_currency text DEFAULT 'USD'::text,
+  connect_enabled boolean DEFAULT false,     -- exposed as a cross-Silo Connect service
+  is_published boolean DEFAULT false,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT form_defs_pkey PRIMARY KEY (id),
+  CONSTRAINT form_defs_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.employees(id) ON DELETE SET NULL
+);
+
+CREATE TABLE public.form_submissions (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  form_id uuid,
+  reference text,
+  title text,                                -- human summary (from a title field)
+  values jsonb DEFAULT '{}'::jsonb,          -- the filled answers
+  status text DEFAULT 'draft'::text,         -- draft|submitted|in_review|approved|rejected|completed
+  current_step integer DEFAULT 0,            -- index into the form's workflow
+  submitted_by uuid,
+  applicant_name text,                       -- who it is for (may be external)
+  applicant_phone text,
+  notes text,
+  fee_amount numeric DEFAULT 0,
+  fee_currency text DEFAULT 'USD'::text,
+  fee_status text DEFAULT 'none'::text,      -- none | requested | paid
+  fee_provider_ref text,                     -- the PSP/bank checkout reference
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT form_submissions_pkey PRIMARY KEY (id),
+  CONSTRAINT form_submissions_form_id_fkey FOREIGN KEY (form_id) REFERENCES public.form_defs(id) ON DELETE SET NULL,
+  CONSTRAINT form_submissions_submitted_by_fkey FOREIGN KEY (submitted_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT form_submissions_status_check CHECK (status = ANY (ARRAY['draft','submitted','in_review','approved','rejected','completed'])),
+  CONSTRAINT form_submissions_fee_status_check CHECK (fee_status = ANY (ARRAY['none','requested','paid']))
+);
+
+CREATE TABLE public.form_submission_events (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  submission_id uuid NOT NULL,
+  ts timestamp with time zone DEFAULT now(),
+  actor text,
+  type text DEFAULT 'note'::text,            -- submitted|approved|rejected|step|fee_requested|fee_paid|note
+  step_name text,
+  note text,
+  CONSTRAINT form_submission_events_pkey PRIMARY KEY (id),
+  CONSTRAINT form_submission_events_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES public.form_submissions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_form_id ON public.form_submissions (form_id);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_status ON public.form_submissions (status);
+CREATE INDEX IF NOT EXISTS idx_form_submission_events_submission_id ON public.form_submission_events (submission_id);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_reference ON public.form_submissions (reference);
+
+-- =====================================================================
+-- PAYMENT PROVIDER (production fee acceptance)
+-- Bakong is not a direct production gateway — acceptance goes through a bank /
+-- PSP merchant API (ABA PayWay, ACLEDA, Wing, ...) that issues the checkout /
+-- KHQR and confirms via WEBHOOK. This config is the payment seam's real
+-- implementation; KHQR generated in-app is only a dev / manual-reconciliation
+-- display. Secrets belong in Vault in production (mirroring ai_config).
+-- =====================================================================
+CREATE TABLE public.payment_config (
+  id boolean DEFAULT true NOT NULL,
+  provider text DEFAULT 'manual'::text,      -- manual | aba_payway | acleda | wing | bakong
+  merchant_id text,
+  api_key_ref uuid,                          -- Vault uuid of the PSP secret (never a readable column)
+  webhook_secret text,                       -- shared secret the PSP signs callbacks with
+  base_url text,                             -- PSP API base
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT payment_config_pkey PRIMARY KEY (id),
+  CONSTRAINT payment_config_singleton CHECK (id = true),
+  CONSTRAINT payment_config_provider_check CHECK (provider = ANY (ARRAY['manual','aba_payway','acleda','wing','bakong']))
+);
+
+-- Service-role bridge for the create-payment edge function to read the PSP key.
+CREATE OR REPLACE FUNCTION public.payment_get_key()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_id uuid; v_val text;
+BEGIN
+  SELECT api_key_ref INTO v_id FROM payment_config WHERE id;
+  IF v_id IS NULL THEN RETURN NULL; END IF;
+  SELECT decrypted_secret INTO v_val FROM vault.decrypted_secrets WHERE id = v_id;
+  RETURN v_val;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.payment_get_key() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_get_key() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.payment_get_key() TO service_role;
