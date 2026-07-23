@@ -4372,3 +4372,88 @@ CREATE TABLE public.insurance_claims (
 CREATE INDEX IF NOT EXISTS idx_insurance_policies_product_id ON public.insurance_policies (product_id);
 CREATE INDEX IF NOT EXISTS idx_insurance_policies_status ON public.insurance_policies (status);
 CREATE INDEX IF NOT EXISTS idx_insurance_claims_policy_id ON public.insurance_claims (policy_id);
+
+-- =====================================================================
+-- KAREYA CONNECT — inter-Silo trusted request/response network
+-- The primitive that turns sovereign Silos (each its own business, its own
+-- database) into a NETWORK: one Silo sends a structured, signed request to a
+-- partner Silo, which processes it under ITS OWN rules and charges ITS OWN fee
+-- (KHQR today), and the sender sees the aggregated status. Data never pools —
+-- each side keeps its own copy; only the envelope crosses the boundary.
+--
+-- THREE PLUGGABLE SEAMS (see lib/connect.ts on the Hub side):
+--   • transport  — how the envelope travels. 'edge' = Silo→Silo edge call
+--                  today; 'loopback' = single-DB demo; future 'camdx' = ride
+--                  CamDX / X-Road with the same envelope.
+--   • payment    — how the receiver charges. KHQR today; x402 later.
+--   • identity   — how partners authenticate. Shared inbound key today;
+--                  CamDigiKey / asymmetric signatures later.
+-- connect_messages is an APPEND-ONLY audit trail (INSERT+SELECT only).
+-- =====================================================================
+CREATE TABLE public.connect_config (
+  id boolean DEFAULT true NOT NULL,
+  display_name text,                         -- how this org appears to partners
+  org_type text DEFAULT 'other'::text,       -- clinic | lab | pharmacy | insurer | ...
+  endpoint_url text,                         -- this org's connect-inbound URL
+  inbound_api_key text,                      -- secret partners present to reach us
+  bakong_account text,                       -- KHQR payee (e.g. name@bank)
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT connect_config_pkey PRIMARY KEY (id),
+  CONSTRAINT connect_config_singleton CHECK (id = true)
+);
+
+CREATE TABLE public.connect_partners (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  partner_name text NOT NULL,
+  org_type text DEFAULT 'other'::text,
+  endpoint_url text,                         -- partner's connect-inbound URL
+  api_key text,                              -- secret we present to the partner
+  transport text DEFAULT 'edge'::text,       -- edge | loopback | camdx
+  status text DEFAULT 'active'::text,        -- pending | active | revoked
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT connect_partners_pkey PRIMARY KEY (id),
+  CONSTRAINT connect_partners_transport_check CHECK (transport = ANY (ARRAY['edge','loopback','camdx'])),
+  CONSTRAINT connect_partners_status_check CHECK (status = ANY (ARRAY['pending','active','revoked']))
+);
+
+CREATE TABLE public.connect_requests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  direction text DEFAULT 'outbound'::text,   -- outbound (we sent) | inbound (we received)
+  request_type text DEFAULT 'referral'::text,-- referral | quote | verification | other
+  partner_id uuid,
+  reference text,                            -- human ref, e.g. 'REF-000123'
+  subject text,                              -- one-line summary
+  payload jsonb DEFAULT '{}'::jsonb,         -- the typed body (referral fields, etc.)
+  content_hash text,                         -- SHA-256 of the canonical payload
+  status text DEFAULT 'draft'::text,         -- draft|sent|received|accepted|rejected|fulfilled|cancelled
+  fee_amount numeric DEFAULT 0,
+  fee_currency text DEFAULT 'USD'::text,
+  fee_status text DEFAULT 'none'::text,      -- none | requested | paid
+  fee_khqr text,                             -- KHQR payload string the payer scans
+  external_ref uuid,                         -- the counterpart request id on the other side
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT connect_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT connect_requests_partner_id_fkey FOREIGN KEY (partner_id) REFERENCES public.connect_partners(id) ON DELETE SET NULL,
+  CONSTRAINT connect_requests_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.employees(id) ON DELETE SET NULL,
+  CONSTRAINT connect_requests_direction_check CHECK (direction = ANY (ARRAY['outbound','inbound'])),
+  CONSTRAINT connect_requests_status_check CHECK (status = ANY (ARRAY['draft','sent','received','accepted','rejected','fulfilled','cancelled'])),
+  CONSTRAINT connect_requests_fee_status_check CHECK (fee_status = ANY (ARRAY['none','requested','paid']))
+);
+
+CREATE TABLE public.connect_messages (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  request_id uuid NOT NULL,
+  ts timestamp with time zone DEFAULT now(),
+  actor text,                                -- who/what caused this event
+  type text DEFAULT 'note'::text,            -- sent|received|accepted|rejected|fulfilled|fee_requested|fee_paid|note
+  note text,
+  CONSTRAINT connect_messages_pkey PRIMARY KEY (id),
+  CONSTRAINT connect_messages_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.connect_requests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_connect_requests_direction ON public.connect_requests (direction, status);
+CREATE INDEX IF NOT EXISTS idx_connect_requests_partner_id ON public.connect_requests (partner_id);
+CREATE INDEX IF NOT EXISTS idx_connect_requests_external_ref ON public.connect_requests (external_ref);
+CREATE INDEX IF NOT EXISTS idx_connect_messages_request_id ON public.connect_messages (request_id);

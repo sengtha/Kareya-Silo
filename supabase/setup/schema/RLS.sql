@@ -919,3 +919,22 @@ CREATE POLICY "View insurance policies" ON public.insurance_policies FOR SELECT 
 CREATE POLICY "Manage insurance policies" ON public.insurance_policies FOR ALL TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Insurance Agent','Manager']));
 CREATE POLICY "View insurance claims" ON public.insurance_claims FOR SELECT TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Accountant','Manager']));
 CREATE POLICY "Manage insurance claims" ON public.insurance_claims FOR ALL TO authenticated USING (has_any_role(ARRAY['Insurance Agent','Manager'])) WITH CHECK (has_any_role(ARRAY['Insurance Agent','Manager']));
+
+-- ---- Kareya Connect (inter-Silo network) --------------------------------
+-- connect_config: employees read (to know our own connect identity); only the
+-- owner changes it (endpoint + inbound key are sensitive). connect_partners:
+-- managers curate trusted channels; employees read. Requests: any employee can
+-- create/respond (a clinician sends a referral); messages are append-only.
+ALTER TABLE public.connect_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connect_partners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connect_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connect_messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View connect config" ON public.connect_config FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Owner manages connect config" ON public.connect_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+CREATE POLICY "View connect partners" ON public.connect_partners FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage connect partners" ON public.connect_partners FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager'])) WITH CHECK (has_any_role(ARRAY['Manager']));
+CREATE POLICY "View connect requests" ON public.connect_requests FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Create connect requests" ON public.connect_requests FOR INSERT TO authenticated WITH CHECK (is_employee());
+CREATE POLICY "Update connect requests" ON public.connect_requests FOR UPDATE TO authenticated USING (is_employee()) WITH CHECK (is_employee());
+CREATE POLICY "View connect messages" ON public.connect_messages FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Append connect messages" ON public.connect_messages FOR INSERT TO authenticated WITH CHECK (is_employee());
