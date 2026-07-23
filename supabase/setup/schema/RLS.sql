@@ -64,6 +64,9 @@ CREATE POLICY "View attendance" ON public.attendance_records FOR SELECT TO authe
 -- everyone else files a correction via the document-request workflow.
 CREATE POLICY "Update attendance" ON public.attendance_records FOR UPDATE TO authenticated USING (is_hr_or_admin()) WITH CHECK (is_hr_or_admin());
 CREATE POLICY "Delete attendance" ON public.attendance_records FOR DELETE TO authenticated USING (is_hr_or_admin());
+-- HR/Admin may also INSERT correction rows: fix a missed clock-in, or mark
+-- absentees for a day. (Employees still can't insert — only the clock RPCs do.)
+CREATE POLICY "Insert attendance (HR)" ON public.attendance_records FOR INSERT TO authenticated WITH CHECK (is_hr_or_admin());
 
 -- ---- office config / holidays -----------------------------------------
 CREATE POLICY "View office config" ON public.office_configs FOR SELECT TO authenticated USING (is_employee());
