@@ -962,3 +962,10 @@ CREATE POLICY "Append form submission events" ON public.form_submission_events F
 ALTER TABLE public.payment_config ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "View payment config" ON public.payment_config FOR SELECT TO authenticated USING (is_employee());
 CREATE POLICY "Owner manages payment config" ON public.payment_config FOR ALL TO authenticated USING (is_admin_or_founder()) WITH CHECK (is_admin_or_founder());
+
+-- ---- workspace config (module activation + business profile) -------------
+-- Every employee can read which modules are active (the sidebar needs it);
+-- Manager/Admin change activation and the Advisor profile.
+ALTER TABLE public.workspace_config ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "View workspace config" ON public.workspace_config FOR SELECT TO authenticated USING (is_employee());
+CREATE POLICY "Manage workspace config" ON public.workspace_config FOR ALL TO authenticated USING (has_any_role(ARRAY['Manager'])) WITH CHECK (has_any_role(ARRAY['Manager']));

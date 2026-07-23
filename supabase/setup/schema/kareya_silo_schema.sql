@@ -4566,3 +4566,24 @@ $function$;
 REVOKE ALL ON FUNCTION public.payment_get_key() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.payment_get_key() FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.payment_get_key() TO service_role;
+
+-- =====================================================================
+-- WORKSPACE CONFIG (module activation + business profile)
+-- Kareya ships ~40 modules; showing them all overwhelms an SME owner. This
+-- singleton stores which modules this business has ACTIVATED (the sidebar shows
+-- only these + always-on core) plus the business profile the Setup Advisor uses
+-- to recommend a relevant set. A NULL row (legacy workspaces) means "show all"
+-- for backward compatibility; new workspaces are seeded with a lean starter set.
+-- =====================================================================
+CREATE TABLE public.workspace_config (
+  id boolean DEFAULT true NOT NULL,
+  active_modules jsonb DEFAULT '[]'::jsonb,  -- NavItem ids the sidebar shows (besides core)
+  onboarded boolean DEFAULT false,           -- has the owner run the Advisor / chosen modules
+  business_type text,                        -- e.g. 'clinic', 'retail', 'restaurant'
+  business_size text,                        -- e.g. 'solo', 'small', 'medium'
+  industry text,
+  business_description text,                  -- free-text the Advisor reasons over
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT workspace_config_pkey PRIMARY KEY (id),
+  CONSTRAINT workspace_config_singleton CHECK (id = true)
+);

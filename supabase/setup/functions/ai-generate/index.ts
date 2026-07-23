@@ -91,6 +91,16 @@ Deno.serve(async (req: Request) => {
         parts = [{ text: `Summarize the following schedule as a friendly morning briefing: ${eventsJson}` }]
         break
       }
+      case 'recommend-modules': {
+        // Setup Advisor: map a business description to relevant Kareya modules.
+        // The authoritative catalog is passed in `context` (built by the Hub, so
+        // it stays versioned with the app); the model MUST only choose ids from
+        // it — it cannot invent features. Returns strict JSON.
+        system = `You are the Kareya Setup Advisor, helping a Cambodian small-business owner pick which Kareya ERP modules to turn on. You are given a CATALOG of available modules (id + what each does). Recommend ONLY the modules that fit the described business, using ONLY ids present in the catalog — never invent an id. Prefer a lean set: the essentials plus the clear industry fit. Reply STRICTLY as JSON: {"modules":[{"id":"<catalog id>","reason":"<one short sentence, plain language>"}],"summary":"<one friendly sentence to the owner>","followUp":"<one optional question to refine, or empty>"}. No prose outside the JSON.`
+        parts = [{ text: `CATALOG:\n${context || ''}\n\nBUSINESS:\n${prompt || ''}` }]
+        wantJson = true
+        break
+      }
       default:
         return json({ error: 'Invalid action' }, 400)
     }
@@ -104,6 +114,11 @@ Deno.serve(async (req: Request) => {
     }
     if (action === 'generate-template-image') {
       return json({ text: raw.replace(/```html/gi, '').replace(/```/g, '').trim() })
+    }
+    if (action === 'recommend-modules') {
+      const parsed = parseJsonLoose(raw) as any
+      const modules = Array.isArray(parsed?.modules) ? parsed.modules : []
+      return json({ modules, summary: parsed?.summary || '', followUp: parsed?.followUp || '' })
     }
     return json({ text: raw })
   } catch (error) {
