@@ -532,6 +532,16 @@ services:
       #     the storage-init one-shot below applies them once storage is up. ---
       - ../supabase/setup/schema/kareya_silo_schema.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-00-schema.sql:Z
       - ../supabase/setup/schema/RLS.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-01-rls.sql:Z
+      # Industry verticals (wave 2) — applied after the base schema + RLS,
+      # since each depends on public.employees and has_any_role().
+      - ../supabase/setup/schema/verticals/developer.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-01-developer.sql:Z
+      - ../supabase/setup/schema/verticals/fuel.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-02-fuel.sql:Z
+      - ../supabase/setup/schema/verticals/ricemill.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-03-ricemill.sql:Z
+      - ../supabase/setup/schema/verticals/electronics.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-04-electronics.sql:Z
+      - ../supabase/setup/schema/verticals/manpower.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-05-manpower.sql:Z
+      - ../supabase/setup/schema/verticals/ktv.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-06-ktv.sql:Z
+      - ../supabase/setup/schema/verticals/freight.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-07-freight.sql:Z
+      - ../supabase/setup/schema/verticals/garment.sql:/docker-entrypoint-initdb.d/migrations/99-kareya-02-08-garment.sql:Z
       # Use named volume to persist pgsodium decryption key between restarts
       - db-config:/etc/postgresql-custom
     healthcheck:
