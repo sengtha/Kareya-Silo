@@ -37,6 +37,11 @@ supabase/setup/
   schema/
     kareya_silo_schema.sql   ERP tables + RLS helper functions + indexes
     RLS.sql                  Row Level Security policies
+    verticals/               one self-contained file per newer industry module
+                             (tables + indexes + RLS), applied after the above
+  demo/
+    demo-seed.sql            master data for every module — safe to re-run
+    demo-reset.sql           clears business data, keeps your access + modules
   functions/
     authenticate-hub-user/   redeems a Hub ticket → mints the Silo JWT
     ai-chat/                 assistant: provider-agnostic chat + tools + RAG
@@ -67,6 +72,19 @@ Manager (`user_silos.url` / `user_silos.anon_key`).
 Run, in order, against your Silo project (SQL editor or `psql`):
 1. `supabase/setup/schema/kareya_silo_schema.sql`
 2. `supabase/setup/schema/RLS.sql`
+3. Every file in `supabase/setup/schema/verticals/` — in any order.
+
+Step 3 is required, not optional: those ten files carry the tables for the
+newest industry modules (property developer, petrol station, rice mill,
+electronics, manpower, KTV, freight, garment, legal/notary, project billing).
+Each is self-contained — it creates its own tables, indexes and RLS policies —
+so they can be applied in any order, and re-applied safely.
+
+### 2b. (Optional) Load demo data
+`supabase/setup/demo/demo-seed.sql` fills the workspace with staff, clients,
+vendors, stock and a starter catalog for every vertical, so no screen opens
+empty. Edit the one marked email line first. `demo-reset.sql` clears it again.
+See `docs/Testing-Kareya.md` in the Hub repo for the test route these support.
 
 ### 3. Deploy the edge functions
 ```
