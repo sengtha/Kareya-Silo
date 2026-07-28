@@ -507,6 +507,31 @@ SELECT v.* FROM (VALUES
 ) AS v(name, role, source_module, basis, rate, min_value, max_value, priority)
 WHERE NOT EXISTS (SELECT 1 FROM commission_rules x WHERE x.name = v.name);
 
+-- ---- fixed assets, classified for GDT tax depreciation ----
+-- One asset per GDT class, so the annual return has something to allow and
+-- the difference between book and tax depreciation is visible on day one.
+INSERT INTO assets (name, category, price, purchase_date, status, condition,
+                    useful_life_months, salvage_value, depreciation_start,
+                    tax_class, tax_depreciation_start)
+SELECT v.* FROM (VALUES
+  ('Warehouse building, Sen Sok','Building',120000::numeric,'2023-01-15'::date,'available','good',
+     240,0::numeric,'2023-01-15'::date,1,'2023-01-15'::date),
+  ('Office server and network rack','IT',9500::numeric,'2024-03-01'::date,'available','good',
+     60,500::numeric,'2024-03-01'::date,2,'2024-03-01'::date),
+  ('Accounting software licence','IT',4200::numeric,'2024-07-01'::date,'available','good',
+     36,0::numeric,'2024-07-01'::date,2,'2024-07-01'::date),
+  ('Delivery truck (Isuzu)','Vehicle',28000::numeric,'2024-05-20'::date,'available','good',
+     84,3000::numeric,'2024-05-20'::date,3,'2024-05-20'::date),
+  ('Office furniture, first floor','Furniture',6800::numeric,'2023-09-10'::date,'available','good',
+     96,0::numeric,'2023-09-10'::date,3,'2023-09-10'::date),
+  ('Workshop compressor and tooling','Equipment',7400::numeric,'2024-02-14'::date,'available','good',
+     120,400::numeric,'2024-02-14'::date,4,'2024-02-14'::date)
+) AS v(name, category, price, purchase_date, status, condition,
+       useful_life_months, salvage_value, depreciation_start,
+       tax_class, tax_depreciation_start)
+WHERE EXISTS (SELECT 1 FROM tax_asset_classes)
+  AND NOT EXISTS (SELECT 1 FROM assets x WHERE x.name = v.name);
+
 -- ---------------------------------------------------------------------
 -- Done. Next: Accounting -> Accounts -> "Install Standard Accounts",
 -- then follow docs/Testing-Kareya.md.
