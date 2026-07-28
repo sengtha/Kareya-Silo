@@ -45,6 +45,19 @@
 -- =====================================================================
 
 -- ---- configuration ------------------------------------------------------
+-- Shared singleton, also created by gdt-returns.sql. Created minimally here
+-- so this file works whichever of the two was applied first; each adds its
+-- own columns by ALTER.
+CREATE TABLE IF NOT EXISTS public.tax_config (
+  id boolean DEFAULT true NOT NULL,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT tax_config_pkey PRIMARY KEY (id),
+  CONSTRAINT tax_config_singleton CHECK (id = true)
+);
+INSERT INTO public.tax_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+-- Owned by gdt-returns.sql; declared here for the same reason.
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS fiscal_year_start_month integer DEFAULT 1;
+
 ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS toi_rate numeric DEFAULT 20;
 ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS subject_to_minimum_tax boolean DEFAULT false;
 ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS minimum_tax_rate numeric DEFAULT 1;

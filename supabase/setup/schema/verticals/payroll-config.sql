@@ -29,51 +29,63 @@
 -- =====================================================================
 
 -- ---- company-wide settings ---------------------------------------------
+-- The verticals are documented as applicable IN ANY ORDER, and 'labour'
+-- sorts before 'payroll-config'. Both files share this singleton, so each
+-- creates it minimally and then adds its own columns by ALTER: whichever
+-- runs first leaves a table the other can extend rather than skip.
 CREATE TABLE IF NOT EXISTS public.payroll_config (
   id boolean DEFAULT true NOT NULL,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT payroll_config_pkey PRIMARY KEY (id),
+  CONSTRAINT payroll_config_singleton CHECK (id = true)
+);
 
-  -- NSSF (ប.ស.ស). Off entirely for a business that has not registered.
-  nssf_enabled boolean DEFAULT false,
-  nssf_pension_employee numeric DEFAULT 2,        -- percent of assessable wage
-  nssf_pension_employer numeric DEFAULT 2,
-  nssf_health_employee numeric DEFAULT 1.3,
-  nssf_health_employer numeric DEFAULT 1.3,
-  nssf_risk_employer numeric DEFAULT 0.8,         -- occupational risk, employer only
-  nssf_cap_enabled boolean DEFAULT true,
-  nssf_wage_cap_khr numeric DEFAULT 1200000,      -- assessable-wage ceiling
+-- NSSF (ប.ស.ស). Off entirely for a business that has not registered.
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_enabled boolean DEFAULT false;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_pension_employee numeric DEFAULT 2;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_pension_employer numeric DEFAULT 2;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_health_employee numeric DEFAULT 1.3;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_health_employer numeric DEFAULT 1.3;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_risk_employer numeric DEFAULT 0.8;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_cap_enabled boolean DEFAULT true;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS nssf_wage_cap_khr numeric DEFAULT 1200000;
 
-  -- Tax on Salary (ToS). borne_by = who actually bears it. Either way the
-  -- GDT declaration reports the same tax — this decides whose money it is.
-  tos_enabled boolean DEFAULT true,
-  tos_borne_by text DEFAULT 'employee',           -- employee | employer
-  tos_gross_up boolean DEFAULT false,             -- net-pay agreements only
-  dependent_relief_khr numeric DEFAULT 150000,
-  tos_brackets jsonb DEFAULT '[
+-- Tax on Salary (ToS). borne_by = who actually bears it. Either way the
+-- GDT declaration reports the same tax — this decides whose money it is.
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS tos_enabled boolean DEFAULT true;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS tos_borne_by text DEFAULT 'employee';
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS tos_gross_up boolean DEFAULT false;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS dependent_relief_khr numeric DEFAULT 150000;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS tos_brackets jsonb DEFAULT '[
     {"upTo": 1300000, "rate": 0},
     {"upTo": 2000000, "rate": 0.05},
     {"upTo": 8500000, "rate": 0.10},
     {"upTo": 12500000, "rate": 0.15},
     {"upTo": null, "rate": 0.20}
-  ]'::jsonb,
+  ]'::jsonb;
 
-  -- Seniority indemnity: statutory 15 days a year, varied by agreement.
-  seniority_enabled boolean DEFAULT true,
-  seniority_days_per_year numeric DEFAULT 15,
-  working_days_per_month numeric DEFAULT 26,
+-- Seniority indemnity: statutory 15 days a year, varied by agreement.
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS seniority_enabled boolean DEFAULT true;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS seniority_days_per_year numeric DEFAULT 15;
+ALTER TABLE public.payroll_config ADD COLUMN IF NOT EXISTS working_days_per_month numeric DEFAULT 26;
 
-  updated_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT payroll_config_pkey PRIMARY KEY (id),
-  CONSTRAINT payroll_config_singleton CHECK (id = true),
-  CONSTRAINT payroll_config_rates_check CHECK (
+DO $c$ BEGIN
+  ALTER TABLE public.payroll_config ADD CONSTRAINT payroll_config_rates_check CHECK (
     nssf_pension_employee BETWEEN 0 AND 100 AND nssf_pension_employer BETWEEN 0 AND 100
     AND nssf_health_employee BETWEEN 0 AND 100 AND nssf_health_employer BETWEEN 0 AND 100
     AND nssf_risk_employer BETWEEN 0 AND 100
     AND nssf_wage_cap_khr >= 0 AND dependent_relief_khr >= 0
-    AND seniority_days_per_year >= 0 AND working_days_per_month > 0),
-  CONSTRAINT payroll_config_borne_check CHECK (tos_borne_by = ANY (ARRAY['employee','employer'])),
-  -- A gross-up only means anything when the employer is bearing the tax.
-  CONSTRAINT payroll_config_grossup_check CHECK (NOT tos_gross_up OR tos_borne_by = 'employer')
-);
+    AND seniority_days_per_year >= 0 AND working_days_per_month > 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
+DO $c$ BEGIN
+  ALTER TABLE public.payroll_config ADD CONSTRAINT payroll_config_borne_check
+    CHECK (tos_borne_by = ANY (ARRAY['employee','employer']));
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
+-- A gross-up only means anything when the employer is bearing the tax.
+DO $c$ BEGIN
+  ALTER TABLE public.payroll_config ADD CONSTRAINT payroll_config_grossup_check
+    CHECK (NOT tos_gross_up OR tos_borne_by = 'employer');
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
 
 -- Default OFF for NSSF: a business that has not registered should not see
 -- deductions it does not make. Turning it on is one switch and deliberate.

@@ -39,21 +39,33 @@
 -- =====================================================================
 
 -- ---- rates --------------------------------------------------------------
+-- The verticals are documented as applicable IN ANY ORDER, and 'toi' sorts
+-- after 'gdt-returns' but 'gdt-returns' is not guaranteed to run first.
+-- Both files share this singleton, so each creates it minimally and adds
+-- its own columns by ALTER: whichever runs first leaves a table the other
+-- can extend rather than skip.
 CREATE TABLE IF NOT EXISTS public.tax_config (
   id boolean DEFAULT true NOT NULL,
-  vat_rate numeric DEFAULT 10,                   -- standard VAT
-  toi_prepayment_rate numeric DEFAULT 1,         -- monthly prepayment of tax on income
-  plt_rate numeric DEFAULT 3,                    -- public lighting tax, on alcohol & tobacco
-  accommodation_rate numeric DEFAULT 2,          -- accommodation tax on room charges
-  vat_registered boolean DEFAULT true,
-  fiscal_year_start_month integer DEFAULT 1,
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT tax_config_pkey PRIMARY KEY (id),
-  CONSTRAINT tax_config_singleton CHECK (id = true),
-  CONSTRAINT tax_config_rates_check CHECK (
-    vat_rate >= 0 AND toi_prepayment_rate >= 0 AND plt_rate >= 0 AND accommodation_rate >= 0),
-  CONSTRAINT tax_config_month_check CHECK (fiscal_year_start_month BETWEEN 1 AND 12)
+  CONSTRAINT tax_config_singleton CHECK (id = true)
 );
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS vat_rate numeric DEFAULT 10;
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS toi_prepayment_rate numeric DEFAULT 1;
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS plt_rate numeric DEFAULT 3;
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS accommodation_rate numeric DEFAULT 2;
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS vat_registered boolean DEFAULT true;
+ALTER TABLE public.tax_config ADD COLUMN IF NOT EXISTS fiscal_year_start_month integer DEFAULT 1;
+
+DO $c$ BEGIN
+  ALTER TABLE public.tax_config ADD CONSTRAINT tax_config_rates_check CHECK (
+    vat_rate >= 0 AND toi_prepayment_rate >= 0 AND plt_rate >= 0 AND accommodation_rate >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
+DO $c$ BEGIN
+  ALTER TABLE public.tax_config ADD CONSTRAINT tax_config_month_check
+    CHECK (fiscal_year_start_month BETWEEN 1 AND 12);
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
+
 INSERT INTO public.tax_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 
 -- ---- 1. classification on sales ----------------------------------------
