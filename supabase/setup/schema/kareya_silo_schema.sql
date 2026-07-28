@@ -936,6 +936,8 @@ BEGIN
     ('5000', 'Cost of Goods Sold', 'expense', 'cogs', false),
     ('5100', 'Salaries & Wages', 'expense', 'payroll', true),
     ('5150', 'Commission Expense', 'expense', 'payroll', false),
+    ('5250', 'Realized Exchange Gain/Loss', 'expense', 'other', false),
+    ('5260', 'Unrealized Exchange Gain/Loss', 'expense', 'other', false),
     ('5200', 'Rent', 'expense', 'operating', false),
     ('5300', 'Utilities', 'expense', 'operating', false),
     ('5400', 'Office Supplies', 'expense', 'operating', false),

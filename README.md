@@ -48,6 +48,7 @@ supabase/setup/
     ai-generate/             one-shot AI helpers (text, doc OCR/templates, etc.)
     ai-ingest/               chunk + embed knowledge-base sources (incl. PDF)
     ai-embed/                Gemini batch embeddings
+    nbc-rate-sync/           fetches the official NBC daily USD/KHR rate
     notify/                  resolves event recipients → relays push to the Hub
 ```
 
@@ -97,6 +98,7 @@ supabase functions deploy ai-generate
 supabase functions deploy ai-ingest
 supabase functions deploy ai-embed
 supabase functions deploy notify
+supabase functions deploy nbc-rate-sync
 supabase functions deploy esign-public --no-verify-jwt
 supabase functions deploy esign-xades
 supabase functions deploy connect-inbound --no-verify-jwt
