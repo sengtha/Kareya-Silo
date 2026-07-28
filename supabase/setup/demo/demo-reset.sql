@@ -13,6 +13,8 @@
 --   *_config singletons     — AI keys, payment/e-sign/e-invoice settings.
 --                             These hold credentials you do not want to
 --                             re-enter, and no test depends on clearing them.
+--   library_policy          — loan period, fine rate and limits are settings
+--                             the librarian tuned, not test data.
 --
 -- The table list is derived from the live schema rather than hard-coded, so
 -- tables added by future verticals are cleared too instead of quietly
@@ -34,7 +36,8 @@ DECLARE
   -- Everything NOT in this list gets truncated.
   v_preserve text[] := ARRAY[
     'employees', 'departments', 'workspace_config',
-    'ai_config', 'payment_config', 'esign_config', 'einvoice_config', 'connect_config'
+    'ai_config', 'payment_config', 'esign_config', 'einvoice_config', 'connect_config',
+    'library_policy'
   ];
   v_tables text;
   v_count  int;

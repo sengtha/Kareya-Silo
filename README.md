@@ -74,9 +74,10 @@ Run, in order, against your Silo project (SQL editor or `psql`):
 2. `supabase/setup/schema/RLS.sql`
 3. Every file in `supabase/setup/schema/verticals/` — in any order.
 
-Step 3 is required, not optional: those ten files carry the tables for the
-newest industry modules (property developer, petrol station, rice mill,
-electronics, manpower, KTV, freight, garment, legal/notary, project billing).
+Step 3 is required, not optional: those files carry the tables for the newest
+industry modules (property developer, petrol station, rice mill, electronics,
+manpower, KTV, freight, garment, legal/notary, project billing, library,
+consignment stock and the research-institute add-on).
 Each is self-contained — it creates its own tables, indexes and RLS policies —
 so they can be applied in any order, and re-applied safely.
 
