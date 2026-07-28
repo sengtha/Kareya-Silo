@@ -493,6 +493,20 @@ FROM (VALUES
 ) AS v(no, name, co, phone, plan, desk)
 WHERE NOT EXISTS (SELECT 1 FROM cowork_members x WHERE x.member_no = v.no);
 
+-- ---- commission rules ----
+-- A general rule plus two specific ones, so the most-specific-wins order and
+-- the tier bands both have something to demonstrate.
+INSERT INTO commission_rules (name, role, source_module, basis, rate, min_value, max_value, priority)
+SELECT v.* FROM (VALUES
+  ('Everyone — 3% baseline', NULL, 'any', 'percent', 3.0, 0, NULL::numeric, 0),
+  ('Stylists — 10% of the service', 'Stylist', 'salon', 'percent', 10.0, 0, NULL::numeric, 1),
+  ('Insurance agents — 20% of agency commission', 'Insurance Agent', 'insurance', 'percent', 20.0, 0, NULL::numeric, 1),
+  ('Brokers — small deals 25%', 'Broker', 'brokerage', 'percent', 25.0, 0, 1000, 2),
+  ('Brokers — large deals 35%', 'Broker', 'brokerage', 'percent', 35.0, 1000, NULL::numeric, 2),
+  ('Mechanics — 15% of labour', 'Mechanic', 'workshop', 'percent', 15.0, 0, NULL::numeric, 1)
+) AS v(name, role, source_module, basis, rate, min_value, max_value, priority)
+WHERE NOT EXISTS (SELECT 1 FROM commission_rules x WHERE x.name = v.name);
+
 -- ---------------------------------------------------------------------
 -- Done. Next: Accounting -> Accounts -> "Install Standard Accounts",
 -- then follow docs/Testing-Kareya.md.
