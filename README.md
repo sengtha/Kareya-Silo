@@ -82,7 +82,8 @@ consignment stock, the research-institute add-on, the customer-deposit
 register, LPG cylinders, co-working, staff commission, the Cambodia
 GDT tax-invoice rules, the monthly tax return, the NBC exchange-rate sync
 with realized/unrealized FX gain and loss, the CIFRS for SMEs chart
-mapping, and the annual tax on income with GDT tax depreciation).
+mapping, the annual tax on income with GDT tax depreciation, and the
+payroll configuration for NSSF, salary tax and seniority).
 Each is self-contained — it creates its own tables, indexes and RLS policies —
 so they can be applied in any order, and re-applied safely.
 
