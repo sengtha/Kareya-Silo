@@ -924,6 +924,7 @@ BEGIN
     ('2100', 'Tax Payable', 'liability', 'tax', true),
     ('2110', 'NSSF Payable', 'liability', 'payable', false),
     ('2120', 'Seniority Indemnity Provision', 'liability', 'payable', false),
+    ('2130', 'Consignment Payable', 'liability', 'payable', false),
     ('3000', 'Owner Equity', 'equity', 'equity', true),
     ('3100', 'Retained Earnings', 'equity', 'retained', true),
     ('4000', 'Sales Revenue', 'income', 'sales', true),
