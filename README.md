@@ -79,7 +79,7 @@ industry modules (property developer, petrol station, rice mill, electronics,
 manpower, KTV, freight, garment, legal/notary, project billing, library,
 consignment stock, the research-institute add-on, the customer-deposit
 register, LPG cylinders, co-working, staff commission and the Cambodia
-GDT tax-invoice rules).
+GDT tax-invoice rules and the monthly tax return).
 Each is self-contained — it creates its own tables, indexes and RLS policies —
 so they can be applied in any order, and re-applied safely.
 
