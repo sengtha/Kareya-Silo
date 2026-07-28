@@ -48,6 +48,7 @@ supabase/setup/
     ai-generate/             one-shot AI helpers (text, doc OCR/templates, etc.)
     ai-ingest/               chunk + embed knowledge-base sources (incl. PDF)
     ai-embed/                Gemini batch embeddings
+    nbc-rate-sync/           fetches the official NBC daily USD/KHR rate
     notify/                  resolves event recipients → relays push to the Hub
 ```
 
@@ -72,13 +73,29 @@ Manager (`user_silos.url` / `user_silos.anon_key`).
 Run, in order, against your Silo project (SQL editor or `psql`):
 1. `supabase/setup/schema/kareya_silo_schema.sql`
 2. `supabase/setup/schema/RLS.sql`
-3. Every file in `supabase/setup/schema/verticals/` — in any order.
+3. Every file in `supabase/setup/schema/verticals/` — **in alphabetical
+   order**, which is what `ls` and the Supabase SQL editor give you.
 
-Step 3 is required, not optional: those ten files carry the tables for the
-newest industry modules (property developer, petrol station, rice mill,
-electronics, manpower, KTV, freight, garment, legal/notary, project billing).
-Each is self-contained — it creates its own tables, indexes and RLS policies —
-so they can be applied in any order, and re-applied safely.
+Step 3 is required, not optional: those files carry the tables for the newest
+industry modules (property developer, petrol station, rice mill, electronics,
+manpower, KTV, freight, garment, legal/notary, project billing, library,
+consignment stock, the research-institute add-on, the customer-deposit
+register, LPG cylinders, co-working, staff commission, the Cambodia
+GDT tax-invoice rules, the monthly tax return, the NBC exchange-rate sync
+with realized/unrealized FX gain and loss, the CIFRS for SMEs chart
+mapping, the annual tax on income with GDT tax depreciation, the payroll
+configuration for NSSF, salary tax and seniority, the evidence-based
+staff evaluation, and Cambodia labour compliance — contracts, seniority
+payouts, overtime bands, work permits, maternity and fringe benefit tax).
+Each file creates its own tables, indexes and RLS policies, and all of them
+are idempotent, so re-running the folder is always safe.
+
+A few files legitimately build on each other — the annual tax return extends
+the monthly one, labour compliance extends payroll settings — so alphabetical
+order matters on a **first** install. If you apply them in some other order and
+one file errors on a missing table or column, **just run the whole folder
+again**: the second pass always completes, because by then everything it needs
+exists. Verified in both alphabetical and reverse-alphabetical order.
 
 ### 2b. (Optional) Load demo data
 `supabase/setup/demo/demo-seed.sql` fills the workspace with staff, clients,
@@ -94,6 +111,7 @@ supabase functions deploy ai-generate
 supabase functions deploy ai-ingest
 supabase functions deploy ai-embed
 supabase functions deploy notify
+supabase functions deploy nbc-rate-sync
 supabase functions deploy esign-public --no-verify-jwt
 supabase functions deploy esign-xades
 supabase functions deploy connect-inbound --no-verify-jwt

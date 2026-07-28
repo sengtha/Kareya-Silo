@@ -43,7 +43,7 @@ BEGIN
       -- wave-2 verticals
       'Sales Agent','Pump Attendant','Mill Operator','Technician','Site Supervisor','Host',
       'Freight Officer','Customs Broker','Line Supervisor','Merchandiser',
-      'Lawyer','Notary','Paralegal'
+      'Lawyer','Notary','Paralegal','Librarian','Gas Agent','Community Manager'
     ], 'Management', 'active', 'fixed', 'onsite', 1500)
   ON CONFLICT (email) DO UPDATE
     SET roles = EXCLUDED.roles, status = 'active', department = 'Management';
@@ -157,7 +157,7 @@ VALUES (true, to_jsonb(ARRAY[
   'academy','lab','grants','clinic','hotel','restaurant','pharmacy','retail','microfinance','property',
   'workshop','salon','construction','logistics','pawn','gym','events','vehiclerental','travel','goldsmith',
   'moneyexchange','water','laundry','farm','optical','vet','brokerage','gaming','parking','funeral','insurance',
-  'developer','fuel','ricemill','electronics','manpower','ktv','freight','garment','legal'
+  'developer','fuel','ricemill','electronics','manpower','ktv','freight','garment','legal','library','lpg','coworking'
 ]), true, 'demo', 'small', 'multi', 'Demo workspace seeded for testing every module.')
 ON CONFLICT (id) DO UPDATE
   SET active_modules = EXCLUDED.active_modules, onboarded = true, updated_at = now();
@@ -338,6 +338,199 @@ AS v(style_no, name, buyer, smv, cmt_price) WHERE NOT EXISTS (SELECT 1 FROM garm
 INSERT INTO garment_lines (name, worker_count, is_active)
 SELECT v.*, true FROM (VALUES ('Line A',42),('Line B',38),('Line C',45))
 AS v(name, worker_count) WHERE NOT EXISTS (SELECT 1 FROM garment_lines l WHERE l.name = v.name);
+
+-- ---- library ----
+-- The circulation policy is created by verticals/library.sql, but a reset
+-- clears data — so restore a working default here too rather than leave the
+-- module with no policy row to read.
+INSERT INTO library_policy (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO library_items (title, authors, isbn, publisher, published_year, language, call_number, category)
+SELECT v.* FROM (VALUES
+  ('A History of Cambodia','David Chandler','978-0813343631','Westview Press',2007,'en','959.6 CHA','History'),
+  ('Khmer Grammar Basics','Sok Panha','978-9924000011','Angkor Press',2019,'km','495.93 SOK','Language'),
+  ('Introduction to Accounting','Mary Wells','978-0134727790','Pearson',2018,'en','657 WEL','Business'),
+  ('Clean Code','Robert C. Martin','978-0132350884','Prentice Hall',2008,'en','005.1 MAR','Computing'),
+  ('Cambodian Folk Tales','Chey Sophea',NULL,'Reyum',2015,'km','398.2 CHE','Fiction'),
+  ('Public Health in Southeast Asia','Nguyen Tran','978-9811234567','Springer',2021,'en','362.1 NGU','Health')
+) AS v(title, authors, isbn, publisher, published_year, language, call_number, category)
+WHERE NOT EXISTS (SELECT 1 FROM library_items x WHERE x.title = v.title);
+
+-- Copies: two titles get several so holds and queues can be exercised.
+INSERT INTO library_copies (item_id, accession_no, shelf, cost, status)
+SELECT (SELECT id FROM library_items WHERE title = v.t), v.acc, v.shelf, v.cost, 'available'
+FROM (VALUES
+  ('A History of Cambodia','ACC-0001','A1',18.00),
+  ('A History of Cambodia','ACC-0002','A1',18.00),
+  ('Khmer Grammar Basics','ACC-0003','A2', 9.00),
+  ('Khmer Grammar Basics','ACC-0004','A2', 9.00),
+  ('Khmer Grammar Basics','ACC-0005','A2', 9.00),
+  ('Introduction to Accounting','ACC-0006','B1',32.00),
+  ('Clean Code','ACC-0007','B2',28.00),
+  ('Clean Code','ACC-0008','B2',28.00),
+  ('Cambodian Folk Tales','ACC-0009','C1', 7.50),
+  ('Public Health in Southeast Asia','ACC-0010','C2',41.00)
+) AS v(t, acc, shelf, cost)
+WHERE NOT EXISTS (SELECT 1 FROM library_copies x WHERE x.accession_no = v.acc);
+
+INSERT INTO library_members (member_no, name, member_type, phone, status)
+SELECT v.* FROM (VALUES
+  ('M-0001','Sokha Chan','staff','012 345 678','active'),
+  ('M-0002','Dara Prak','staff','012 111 222','active'),
+  ('M-0003','Srey Neang','student','012 333 444','active'),
+  ('M-0004','Vireak Sok','student','012 555 666','active'),
+  ('M-0005','Chanlina Meas','student','012 777 888','active'),
+  ('M-0006','Rithy Chea','public','012 999 000','suspended')
+) AS v(member_no, name, member_type, phone, status)
+WHERE NOT EXISTS (SELECT 1 FROM library_members x WHERE x.member_no = v.member_no);
+
+-- ---- consignment (a publisher whose stock we hold but do not own) ----
+INSERT INTO vendors (name, email, phone, address, tax_id, lead_time_days, is_preferred)
+SELECT 'Angkor Book Distributors','sales@angkorbooks.test','023 666 666','St 310, Phnom Penh','K001-6666', 14, false
+WHERE NOT EXISTS (SELECT 1 FROM vendors x WHERE x.name = 'Angkor Book Distributors');
+
+INSERT INTO stock_items (sku, name, category, unit, cost_price, sale_price, quantity, reorder_level, location,
+                         is_consigned, consignor_vendor_id, isbn, author, publisher)
+SELECT v.sku, v.name, 'Books', 'copy', v.cost, v.price, v.qty, 5, 'Main Warehouse',
+       true, (SELECT id FROM vendors WHERE name = 'Angkor Book Distributors'), v.isbn, v.author, v.publisher
+FROM (VALUES
+  ('BK-0001','A History of Cambodia (retail)', 12.00, 19.50, 20,'978-0813343631','David Chandler','Westview Press'),
+  ('BK-0002','Khmer Grammar Basics (retail)',   5.50,  9.00, 35,'978-9924000011','Sok Panha','Angkor Press'),
+  ('BK-0003','Clean Code (retail)',            19.00, 29.00, 12,'978-0132350884','Robert C. Martin','Prentice Hall')
+) AS v(sku, name, cost, price, qty, isbn, author, publisher)
+WHERE NOT EXISTS (SELECT 1 FROM stock_items x WHERE x.sku = v.sku);
+
+-- ---- research institute ----
+INSERT INTO research_equipment (name, code, location, charge_rate, charge_unit)
+SELECT v.* FROM (VALUES
+  ('Mass Spectrometer','EQ-MS-01','Lab 2', 25.00,'hour'),
+  ('High-speed Centrifuge','EQ-CF-01','Lab 1', 8.00,'hour'),
+  ('Field Vehicle (4WD)','EQ-VH-01','Motor pool', 45.00,'day'),
+  ('PCR Thermocycler','EQ-PCR-01','Lab 1', 0.00,'hour')
+) AS v(name, code, location, charge_rate, charge_unit)
+WHERE NOT EXISTS (SELECT 1 FROM research_equipment x WHERE x.name = v.name);
+
+-- One protocol is deliberately close to expiry and one has already lapsed,
+-- so the ethics warnings have something real to show.
+INSERT INTO ethics_approvals (protocol_no, title, committee, submitted_date, approved_date, expires_date, status)
+SELECT v.protocol_no, v.title, v.committee, v.sd::date, v.ad::date, v.ed::date, v.status FROM (VALUES
+  ('IRB-2025-014','Rural water quality and household health','National Ethics Committee','2025-01-10','2025-02-20','2026-02-19','approved'),
+  ('IRB-2026-003','Adolescent nutrition survey','National Ethics Committee','2026-01-05','2026-02-10','2026-09-30','approved'),
+  ('IRB-2026-011','Urban air quality monitoring','University Review Board','2026-06-01',NULL,NULL,'submitted')
+) AS v(protocol_no, title, committee, sd, ad, ed, status)
+WHERE NOT EXISTS (SELECT 1 FROM ethics_approvals x WHERE x.protocol_no = v.protocol_no);
+
+INSERT INTO research_outputs (title, output_type, authors, venue, publication_date, status, citation_count, open_access)
+SELECT v.title, v.output_type, v.authors, v.venue, v.pd::date, v.status, v.cites, v.oa FROM (VALUES
+  ('Arsenic levels in Mekong delta wells','journal_article','Chan S., Tran N.','Environmental Health Perspectives','2025-11-14','published',12,true),
+  ('Adolescent nutrition in peri-urban Phnom Penh','conference','Meas C., Sok V.','SEA Public Health Congress','2026-03-02','published',3,false),
+  ('Household water treatment dataset 2025','dataset','Chan S.','Zenodo','2026-01-20','published',1,true),
+  ('Air quality sensor calibration methods','journal_article','Prak D.','Atmospheric Measurement Techniques',NULL,'under_review',0,false)
+) AS v(title, output_type, authors, venue, pd, status, cites, oa)
+WHERE NOT EXISTS (SELECT 1 FROM research_outputs x WHERE x.title = v.title);
+
+-- ---- LPG / gas cylinders ----
+INSERT INTO lpg_products (name, size_kg, gas_price, cylinder_deposit, cylinder_value, test_interval_months)
+SELECT v.* FROM (VALUES
+  ('12.5kg Household',12.5,14.00,25.00,45.00,60),
+  ('15kg Household',15.0,17.00,28.00,52.00,60),
+  ('45kg Commercial',45.0,48.00,60.00,140.00,60)
+) AS v(name, size_kg, gas_price, cylinder_deposit, cylinder_value, test_interval_months)
+WHERE NOT EXISTS (SELECT 1 FROM lpg_products x WHERE x.name = v.name);
+
+-- Twelve cylinders. Two are deliberately past their retest date so the
+-- safety block has something real to refuse.
+INSERT INTO lpg_cylinders (serial_no, product_id, state, location, last_test_date, next_test_date)
+SELECT v.serial, (SELECT id FROM lpg_products WHERE name = v.prod), v.state, 'depot', v.lt::date, v.nt::date
+FROM (VALUES
+  ('LPG-00001','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00002','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00003','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00004','12.5kg Household','empty','2023-03-01','2028-03-01'),
+  ('LPG-00005','12.5kg Household','empty','2021-01-15','2026-01-14'),
+  ('LPG-00006','15kg Household','full','2024-06-10','2029-06-10'),
+  ('LPG-00007','15kg Household','full','2024-06-10','2029-06-10'),
+  ('LPG-00008','15kg Household','empty','2024-06-10','2029-06-10'),
+  ('LPG-00009','45kg Commercial','full','2022-11-20','2027-11-20'),
+  ('LPG-00010','45kg Commercial','full','2022-11-20','2027-11-20'),
+  ('LPG-00011','45kg Commercial','empty','2020-08-05','2025-08-04'),
+  ('LPG-00012','45kg Commercial','full','2024-02-01','2029-02-01')
+) AS v(serial, prod, state, lt, nt)
+WHERE NOT EXISTS (SELECT 1 FROM lpg_cylinders x WHERE x.serial_no = v.serial);
+
+-- ---- co-working ----
+INSERT INTO cowork_plans (name, plan_type, monthly_price, day_pass_price, included_hours, overage_rate, deposit)
+SELECT v.* FROM (VALUES
+  ('Hot Desk','hot_desk', 60.00, 6.00,  4, 5.00,  60.00),
+  ('Dedicated Desk','dedicated_desk',120.00, 0.00, 10, 4.00, 120.00),
+  ('Private Office (4)','private_office',450.00, 0.00, 25, 3.00, 450.00),
+  ('Virtual Office','virtual', 25.00, 0.00,  0, 8.00,   0.00)
+) AS v(name, plan_type, monthly_price, day_pass_price, included_hours, overage_rate, deposit)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_plans x WHERE x.name = v.name);
+
+INSERT INTO cowork_spaces (name, space_type, capacity, floor, hourly_rate)
+SELECT v.* FROM (VALUES
+  ('Desk 01','desk',1,'2F', 0.00), ('Desk 02','desk',1,'2F', 0.00),
+  ('Desk 03','desk',1,'2F', 0.00), ('Desk 04','desk',1,'2F', 0.00),
+  ('Desk 05','desk',1,'3F', 0.00), ('Desk 06','desk',1,'3F', 0.00),
+  ('Meeting Room A','meeting_room',8,'2F', 9.00),
+  ('Meeting Room B','meeting_room',4,'3F', 6.00),
+  ('Phone Booth 1','phone_booth',1,'2F', 3.00),
+  ('Office 301','office',4,'3F', 0.00)
+) AS v(name, space_type, capacity, floor, hourly_rate)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_spaces x WHERE x.name = v.name);
+
+INSERT INTO cowork_members (member_no, name, company_name, phone, plan_id, desk_space_id, status)
+SELECT v.no, v.name, v.co, v.phone,
+       (SELECT id FROM cowork_plans WHERE name = v.plan),
+       (SELECT id FROM cowork_spaces WHERE name = v.desk),
+       'active'
+FROM (VALUES
+  ('CW-001','Sopheak Ly','Khmer Devs','012 111 333','Dedicated Desk','Desk 01'),
+  ('CW-002','Malis Ung','Freelance','012 222 444','Hot Desk',NULL),
+  ('CW-003','Panha Tep','Angkor Analytics','012 333 555','Dedicated Desk','Desk 02'),
+  ('CW-004','Chantrea Yos','Studio Nine','012 444 666','Hot Desk',NULL)
+) AS v(no, name, co, phone, plan, desk)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_members x WHERE x.member_no = v.no);
+
+-- ---- commission rules ----
+-- A general rule plus two specific ones, so the most-specific-wins order and
+-- the tier bands both have something to demonstrate.
+INSERT INTO commission_rules (name, role, source_module, basis, rate, min_value, max_value, priority)
+SELECT v.* FROM (VALUES
+  ('Everyone — 3% baseline', NULL, 'any', 'percent', 3.0, 0, NULL::numeric, 0),
+  ('Stylists — 10% of the service', 'Stylist', 'salon', 'percent', 10.0, 0, NULL::numeric, 1),
+  ('Insurance agents — 20% of agency commission', 'Insurance Agent', 'insurance', 'percent', 20.0, 0, NULL::numeric, 1),
+  ('Brokers — small deals 25%', 'Broker', 'brokerage', 'percent', 25.0, 0, 1000, 2),
+  ('Brokers — large deals 35%', 'Broker', 'brokerage', 'percent', 35.0, 1000, NULL::numeric, 2),
+  ('Mechanics — 15% of labour', 'Mechanic', 'workshop', 'percent', 15.0, 0, NULL::numeric, 1)
+) AS v(name, role, source_module, basis, rate, min_value, max_value, priority)
+WHERE NOT EXISTS (SELECT 1 FROM commission_rules x WHERE x.name = v.name);
+
+-- ---- fixed assets, classified for GDT tax depreciation ----
+-- One asset per GDT class, so the annual return has something to allow and
+-- the difference between book and tax depreciation is visible on day one.
+INSERT INTO assets (name, category, price, purchase_date, status, condition,
+                    useful_life_months, salvage_value, depreciation_start,
+                    tax_class, tax_depreciation_start)
+SELECT v.* FROM (VALUES
+  ('Warehouse building, Sen Sok','Building',120000::numeric,'2023-01-15'::date,'available','good',
+     240,0::numeric,'2023-01-15'::date,1,'2023-01-15'::date),
+  ('Office server and network rack','IT',9500::numeric,'2024-03-01'::date,'available','good',
+     60,500::numeric,'2024-03-01'::date,2,'2024-03-01'::date),
+  ('Accounting software licence','IT',4200::numeric,'2024-07-01'::date,'available','good',
+     36,0::numeric,'2024-07-01'::date,2,'2024-07-01'::date),
+  ('Delivery truck (Isuzu)','Vehicle',28000::numeric,'2024-05-20'::date,'available','good',
+     84,3000::numeric,'2024-05-20'::date,3,'2024-05-20'::date),
+  ('Office furniture, first floor','Furniture',6800::numeric,'2023-09-10'::date,'available','good',
+     96,0::numeric,'2023-09-10'::date,3,'2023-09-10'::date),
+  ('Workshop compressor and tooling','Equipment',7400::numeric,'2024-02-14'::date,'available','good',
+     120,400::numeric,'2024-02-14'::date,4,'2024-02-14'::date)
+) AS v(name, category, price, purchase_date, status, condition,
+       useful_life_months, salvage_value, depreciation_start,
+       tax_class, tax_depreciation_start)
+WHERE EXISTS (SELECT 1 FROM tax_asset_classes)
+  AND NOT EXISTS (SELECT 1 FROM assets x WHERE x.name = v.name);
 
 -- ---------------------------------------------------------------------
 -- Done. Next: Accounting -> Accounts -> "Install Standard Accounts",
