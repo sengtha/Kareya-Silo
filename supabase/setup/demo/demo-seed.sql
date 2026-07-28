@@ -43,7 +43,7 @@ BEGIN
       -- wave-2 verticals
       'Sales Agent','Pump Attendant','Mill Operator','Technician','Site Supervisor','Host',
       'Freight Officer','Customs Broker','Line Supervisor','Merchandiser',
-      'Lawyer','Notary','Paralegal','Librarian'
+      'Lawyer','Notary','Paralegal','Librarian','Gas Agent','Community Manager'
     ], 'Management', 'active', 'fixed', 'onsite', 1500)
   ON CONFLICT (email) DO UPDATE
     SET roles = EXCLUDED.roles, status = 'active', department = 'Management';
@@ -157,7 +157,7 @@ VALUES (true, to_jsonb(ARRAY[
   'academy','lab','grants','clinic','hotel','restaurant','pharmacy','retail','microfinance','property',
   'workshop','salon','construction','logistics','pawn','gym','events','vehiclerental','travel','goldsmith',
   'moneyexchange','water','laundry','farm','optical','vet','brokerage','gaming','parking','funeral','insurance',
-  'developer','fuel','ricemill','electronics','manpower','ktv','freight','garment','legal','library'
+  'developer','fuel','ricemill','electronics','manpower','ktv','freight','garment','legal','library','lpg','coworking'
 ]), true, 'demo', 'small', 'multi', 'Demo workspace seeded for testing every module.')
 ON CONFLICT (id) DO UPDATE
   SET active_modules = EXCLUDED.active_modules, onboarded = true, updated_at = now();
@@ -428,6 +428,70 @@ SELECT v.title, v.output_type, v.authors, v.venue, v.pd::date, v.status, v.cites
   ('Air quality sensor calibration methods','journal_article','Prak D.','Atmospheric Measurement Techniques',NULL,'under_review',0,false)
 ) AS v(title, output_type, authors, venue, pd, status, cites, oa)
 WHERE NOT EXISTS (SELECT 1 FROM research_outputs x WHERE x.title = v.title);
+
+-- ---- LPG / gas cylinders ----
+INSERT INTO lpg_products (name, size_kg, gas_price, cylinder_deposit, cylinder_value, test_interval_months)
+SELECT v.* FROM (VALUES
+  ('12.5kg Household',12.5,14.00,25.00,45.00,60),
+  ('15kg Household',15.0,17.00,28.00,52.00,60),
+  ('45kg Commercial',45.0,48.00,60.00,140.00,60)
+) AS v(name, size_kg, gas_price, cylinder_deposit, cylinder_value, test_interval_months)
+WHERE NOT EXISTS (SELECT 1 FROM lpg_products x WHERE x.name = v.name);
+
+-- Twelve cylinders. Two are deliberately past their retest date so the
+-- safety block has something real to refuse.
+INSERT INTO lpg_cylinders (serial_no, product_id, state, location, last_test_date, next_test_date)
+SELECT v.serial, (SELECT id FROM lpg_products WHERE name = v.prod), v.state, 'depot', v.lt::date, v.nt::date
+FROM (VALUES
+  ('LPG-00001','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00002','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00003','12.5kg Household','full','2023-03-01','2028-03-01'),
+  ('LPG-00004','12.5kg Household','empty','2023-03-01','2028-03-01'),
+  ('LPG-00005','12.5kg Household','empty','2021-01-15','2026-01-14'),
+  ('LPG-00006','15kg Household','full','2024-06-10','2029-06-10'),
+  ('LPG-00007','15kg Household','full','2024-06-10','2029-06-10'),
+  ('LPG-00008','15kg Household','empty','2024-06-10','2029-06-10'),
+  ('LPG-00009','45kg Commercial','full','2022-11-20','2027-11-20'),
+  ('LPG-00010','45kg Commercial','full','2022-11-20','2027-11-20'),
+  ('LPG-00011','45kg Commercial','empty','2020-08-05','2025-08-04'),
+  ('LPG-00012','45kg Commercial','full','2024-02-01','2029-02-01')
+) AS v(serial, prod, state, lt, nt)
+WHERE NOT EXISTS (SELECT 1 FROM lpg_cylinders x WHERE x.serial_no = v.serial);
+
+-- ---- co-working ----
+INSERT INTO cowork_plans (name, plan_type, monthly_price, day_pass_price, included_hours, overage_rate, deposit)
+SELECT v.* FROM (VALUES
+  ('Hot Desk','hot_desk', 60.00, 6.00,  4, 5.00,  60.00),
+  ('Dedicated Desk','dedicated_desk',120.00, 0.00, 10, 4.00, 120.00),
+  ('Private Office (4)','private_office',450.00, 0.00, 25, 3.00, 450.00),
+  ('Virtual Office','virtual', 25.00, 0.00,  0, 8.00,   0.00)
+) AS v(name, plan_type, monthly_price, day_pass_price, included_hours, overage_rate, deposit)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_plans x WHERE x.name = v.name);
+
+INSERT INTO cowork_spaces (name, space_type, capacity, floor, hourly_rate)
+SELECT v.* FROM (VALUES
+  ('Desk 01','desk',1,'2F', 0.00), ('Desk 02','desk',1,'2F', 0.00),
+  ('Desk 03','desk',1,'2F', 0.00), ('Desk 04','desk',1,'2F', 0.00),
+  ('Desk 05','desk',1,'3F', 0.00), ('Desk 06','desk',1,'3F', 0.00),
+  ('Meeting Room A','meeting_room',8,'2F', 9.00),
+  ('Meeting Room B','meeting_room',4,'3F', 6.00),
+  ('Phone Booth 1','phone_booth',1,'2F', 3.00),
+  ('Office 301','office',4,'3F', 0.00)
+) AS v(name, space_type, capacity, floor, hourly_rate)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_spaces x WHERE x.name = v.name);
+
+INSERT INTO cowork_members (member_no, name, company_name, phone, plan_id, desk_space_id, status)
+SELECT v.no, v.name, v.co, v.phone,
+       (SELECT id FROM cowork_plans WHERE name = v.plan),
+       (SELECT id FROM cowork_spaces WHERE name = v.desk),
+       'active'
+FROM (VALUES
+  ('CW-001','Sopheak Ly','Khmer Devs','012 111 333','Dedicated Desk','Desk 01'),
+  ('CW-002','Malis Ung','Freelance','012 222 444','Hot Desk',NULL),
+  ('CW-003','Panha Tep','Angkor Analytics','012 333 555','Dedicated Desk','Desk 02'),
+  ('CW-004','Chantrea Yos','Studio Nine','012 444 666','Hot Desk',NULL)
+) AS v(no, name, co, phone, plan, desk)
+WHERE NOT EXISTS (SELECT 1 FROM cowork_members x WHERE x.member_no = v.no);
 
 -- ---------------------------------------------------------------------
 -- Done. Next: Accounting -> Accounts -> "Install Standard Accounts",

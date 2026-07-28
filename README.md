@@ -77,7 +77,8 @@ Run, in order, against your Silo project (SQL editor or `psql`):
 Step 3 is required, not optional: those files carry the tables for the newest
 industry modules (property developer, petrol station, rice mill, electronics,
 manpower, KTV, freight, garment, legal/notary, project billing, library,
-consignment stock and the research-institute add-on).
+consignment stock, the research-institute add-on, the customer-deposit
+register, LPG cylinders and co-working).
 Each is self-contained — it creates its own tables, indexes and RLS policies —
 so they can be applied in any order, and re-applied safely.
 
