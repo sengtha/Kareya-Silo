@@ -141,12 +141,16 @@ deploy them with JWT verification on (the default).
 | `SILO_JWT_SECRET` | ✅ | Secret used to **sign this Silo's JWTs**. Must match this project's Supabase JWT secret (Project Settings → API → JWT Secret) so PostgREST/Realtime accept the minted tokens. |
 | `SUPABASE_URL` | ✅ | This Silo's API URL (usually injected automatically). |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Admin key, used only to provision the employee roster on first entry. Never exposed to clients. |
-| `HUB_URL` | ⛳ | The Kareya Hub Supabase URL. Defaults to the official Hub if unset. |
-| `HUB_ANON_KEY` | ✅ | The Kareya Hub's anon/publishable key, so this Silo can call `redeem_silo_ticket` on the Hub. |
+| `HUB_URL` | ⛳ | The Kareya Hub's **Supabase API** host. Defaults to `https://hub.kareya.io` — the custom domain in front of the official Hub project. Not the web app: `kareya.io` serves the React bundle and would 404 every call. To address the project directly, use `https://nwfipfbdhksucqdsyaho.supabase.co`. |
+| `HUB_ANON_KEY` | ⛳ | The Hub's anon/publishable key, used to call `redeem_silo_ticket`. Defaults to the official Hub's key, which is public by design — it ships in the Kareya browser bundle and every table behind it is under RLS. Set this only for a self-hosted Hub. |
 | `SUPABASE_ANON_KEY` | ✅ | This Silo's anon key (usually injected automatically). The AI functions use it to build a JWT-scoped client so RLS applies. |
 
 ```
-supabase secrets set SILO_JWT_SECRET=... HUB_ANON_KEY=...
+# Only SILO_JWT_SECRET is required against the official Hub.
+supabase secrets set SILO_JWT_SECRET=...
+
+# Self-hosted Hub, or the official project addressed directly:
+supabase secrets set HUB_URL=... HUB_ANON_KEY=...
 ```
 
 > **AI provider keys are not env secrets.** They are stored encrypted in Supabase
