@@ -437,5 +437,135 @@ SELECT ok((SELECT count(*) FROM document_series WHERE code IN ('IN','OUT','INT')
 SELECT ok((SELECT count(*) FROM document_attachments WHERE note LIKE 'Imported from%') = 0,
           'no phantom legacy attachments were invented');
 
+
+\echo '== 11. the form engine, moved to the server'
+
+INSERT INTO form_defs (id, name, category, schema, workflow, fee_amount, fee_currency, is_published)
+VALUES ('f0000000-0000-0000-0000-000000000001', 'Business licence', 'permits',
+        '[{"key":"trader","label":"Trader name","type":"text","required":true,"isTitle":true},
+          {"key":"note","label":"Note","type":"textarea"}]'::jsonb,
+        '[{"id":"w1","name":"Reception check","type":"approval","allowedRoles":["Reception"]},
+          {"id":"w2","name":"Fee","type":"payment"},
+          {"id":"w3","name":"Manager sign-off","type":"approval","allowedRoles":["Manager"]}]'::jsonb,
+        25, 'USD', true);
+
+INSERT INTO form_defs (id, name, schema, workflow, is_published)
+VALUES ('f0000000-0000-0000-0000-000000000002', 'Unpublished draft', '[]'::jsonb, '[]'::jsonb, false);
+
+SELECT act_as('clerk@office.kh');
+SELECT raises($$SELECT submit_form('f0000000-0000-0000-0000-000000000002', '{}'::jsonb)$$,
+              'an unpublished form cannot be submitted');
+SELECT raises($$SELECT submit_form('f0000000-0000-0000-0000-000000000001', '{"note":"no trader"}'::jsonb)$$,
+              'a required field missing on the server is refused, not only in the browser');
+
+SELECT ok((submit_form('f0000000-0000-0000-0000-000000000001',
+             '{"trader":"Sok Trading","note":"first"}'::jsonb)).reference LIKE 'SUB-%',
+          'a submission is numbered by the database, not by a browser clock');
+SELECT ok((SELECT title FROM form_submissions WHERE reference LIKE 'SUB-%' LIMIT 1) = 'Sok Trading',
+          'the field flagged isTitle becomes the submission title');
+SELECT ok((SELECT current_step FROM form_submissions LIMIT 1) = 0,
+          'it starts on the first step');
+SELECT ok((SELECT fee_amount FROM form_submissions LIMIT 1) = 25,
+          'the fee is carried onto the submission because the workflow has a payment step');
+
+-- The hole this closes: an employee could PATCH their own row to approved
+-- and paid, and forge the events that were the only audit trail.
+SELECT raises($$UPDATE form_submissions SET status = 'completed', fee_status = 'paid'$$,
+              'a client can no longer write a submission directly')
+  WHERE EXISTS (SELECT 1 FROM pg_policies
+                 WHERE tablename = 'form_submissions' AND cmd IN ('UPDATE','ALL'));
+SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies
+                       WHERE tablename = 'form_submissions' AND cmd IN ('UPDATE','ALL','INSERT')),
+          'no client policy grants write on form_submissions at all');
+SELECT ok(NOT EXISTS (SELECT 1 FROM pg_policies
+                       WHERE tablename = 'form_submission_events' AND cmd IN ('INSERT','ALL')),
+          'and none grants an event to be forged');
+
+SELECT raises($$SELECT process_form_submission(
+    (SELECT id FROM form_submissions LIMIT 1), 'approve')$$,
+              'the submitter may not approve their own submission');
+
+SELECT act_as('deputy@office.kh');
+SELECT ok((process_form_submission((SELECT id FROM form_submissions LIMIT 1), 'approve')).current_step = 1,
+          'a colleague with the Reception role clears step 1');
+SELECT ok((SELECT status FROM form_submissions LIMIT 1) = 'in_review',
+          'and the submission is now in review');
+
+SELECT raises($$SELECT process_form_submission((SELECT id FROM form_submissions LIMIT 1), 'approve')$$,
+              'a payment step cannot be approved past — it waits for the fee');
+
+SELECT act_as('clerk@office.kh');
+SELECT raises($$SELECT record_form_fee_paid((SELECT id FROM form_submissions LIMIT 1))$$,
+              'an ordinary clerk cannot mark their own fee paid');
+
+SELECT act_as('manager@office.kh');
+SELECT ok((record_form_fee_paid((SELECT id FROM form_submissions LIMIT 1))).current_step = 2,
+          'paying the fee moves the submission past the payment step by itself');
+SELECT ok((SELECT fee_status FROM form_submissions LIMIT 1) = 'paid',
+          'and the fee reads as paid');
+SELECT ok(EXISTS (SELECT 1 FROM form_submission_events WHERE type = 'fee_paid'),
+          'the payment is on the trail');
+
+-- The webhook path writes only fee_status. Before the trigger existed, a
+-- submission paid through the bank sat on its payment step forever while
+-- one paid by hand went through.
+SELECT ok((submit_form('f0000000-0000-0000-0000-000000000001', '{"trader":"Webhook Co"}'::jsonb)).current_step = 0,
+          'a second submission starts at the beginning');
+SELECT act_as('deputy@office.kh');
+SELECT process_form_submission((SELECT id FROM form_submissions WHERE title = 'Webhook Co'), 'approve');
+UPDATE form_submissions SET fee_status = 'paid' WHERE title = 'Webhook Co';   -- what the webhook does
+SELECT ok((SELECT current_step FROM form_submissions WHERE title = 'Webhook Co') = 2,
+          'a fee settled by the bank webhook advances the same as one settled by hand');
+
+SELECT act_as('director@office.kh');
+SELECT raises($$SELECT process_form_submission(
+    (SELECT id FROM form_submissions WHERE title = 'Sok Trading'), 'approve')$$,
+              'the director''s roles do not open a step reserved for the manager');
+
+SELECT act_as('manager@office.kh');
+SELECT ok((process_form_submission(
+             (SELECT id FROM form_submissions WHERE title = 'Sok Trading'), 'approve')).status = 'completed',
+          'the manager takes the last step and the submission completes');
+SELECT raises($$SELECT process_form_submission(
+    (SELECT id FROM form_submissions WHERE title = 'Sok Trading'), 'reject')$$,
+              'a completed submission cannot then be rejected');
+
+SELECT act_as('clerk@office.kh');
+SELECT raises($$SELECT request_fee('employees', (SELECT id FROM form_submissions LIMIT 1), 10, 'USD')$$,
+              'a fee cannot be requested against an arbitrary table');
+SELECT raises($$SELECT request_fee('form_submissions', (SELECT id FROM form_submissions LIMIT 1), 0, 'USD')$$,
+              'a fee of zero is refused');
+
+\echo '== 12. one inbox'
+
+-- Sitting on w1 (Reception), submitted by the clerk.
+SELECT ok((submit_form('f0000000-0000-0000-0000-000000000001', '{"trader":"Inbox Test"}'::jsonb)).current_step = 0,
+          'a fresh submission waits on Reception');
+
+SELECT act_as('deputy@office.kh');
+SELECT ok(EXISTS (SELECT 1 FROM my_action_inbox()
+                   WHERE out_kind = 'form' AND out_title = 'Inbox Test'),
+          'the deputy sees the form waiting on their role');
+
+SELECT act_as('clerk@office.kh');
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox()
+                       WHERE out_kind = 'form' AND out_title = 'Inbox Test'),
+          'the person who submitted it does not see it as theirs to approve');
+
+SELECT act_as('manager@office.kh');
+SELECT ok(EXISTS (SELECT 1 FROM my_action_inbox()
+                   WHERE out_kind = 'document' AND out_title = 'Overdue circular' AND out_overdue),
+          'the manager''s overdue incoming letter is in the same inbox as the forms');
+SELECT ok((SELECT out_overdue FROM my_action_inbox() LIMIT 1) = true,
+          'and the most overdue item is at the top');
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Request for staffing figures'),
+          'a closed file has left the inbox');
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Reply on staffing figures'),
+          'and so has a voided one');
+
+SELECT act_as('nobody@elsewhere.kh');
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox()),
+          'somebody who is not an employee has an empty inbox, not an error');
+
 \echo ''
 \echo 'ALL DOCUMENT REGISTER ASSERTIONS PASSED'

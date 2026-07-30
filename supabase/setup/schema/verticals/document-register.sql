@@ -976,3 +976,492 @@ CREATE POLICY approval_delegations_write ON public.approval_delegations
 -- The attachment read policy leans on the request's own policy: the
 -- sub-select is itself filtered by "View documents", so an attachment on a
 -- confidential document is invisible to anyone who cannot see the document.
+
+-- =====================================================================
+-- 11. FORM SUBMISSIONS JOIN THE SAME REGISTER
+-- ---------------------------------------------------------------------
+-- The form builder shipped its own workflow engine, and it lived in the
+-- BROWSER. approveSubmissionStep() was a plain UPDATE, and the table's
+-- policy was `USING (is_employee())` with no role check and no step check
+-- — so any employee could PATCH their own submission's current_step,
+-- status and fee_status straight to approved-and-paid, then write matching
+-- rows into form_submission_events, which was the only audit trail.
+--
+-- Everything below moves that engine to the server, with the same
+-- guarantees process_document() already gave documents: the caller must
+-- hold the current step's role (delegation counts), nobody approves their
+-- own submission, and a reference is issued by the database rather than
+-- assembled from Date.now() in a browser.
+--
+-- It lives in this file and not its own because these are one feature.
+-- Splitting the register across two schema files, in the module whose
+-- whole point is that fragmented flow costs staff double work, would be
+-- an odd thing to do.
+-- =====================================================================
+
+INSERT INTO public.document_series (code, name, prefix, width, separator, reset_yearly)
+VALUES ('FORM', 'Form submissions', 'SUB-', 4, '/', true)
+ON CONFLICT (code) DO NOTHING;
+
+ALTER TABLE public.form_submissions ADD COLUMN IF NOT EXISTS series_code text;
+
+-- Old references were `SUB-` + the last 8 digits of a millisecond clock,
+-- with nothing stopping two of them being identical. Give any duplicate a
+-- distinguishing suffix before the unique index goes on, rather than
+-- letting the index fail and leaving the whole vertical unapplied.
+DO $$
+DECLARE r record; n integer;
+BEGIN
+  FOR r IN
+    SELECT reference FROM public.form_submissions
+     WHERE reference IS NOT NULL
+     GROUP BY reference HAVING count(*) > 1
+  LOOP
+    n := 0;
+    FOR r IN SELECT id FROM public.form_submissions WHERE reference = r.reference ORDER BY created_at LOOP
+      n := n + 1;
+      IF n > 1 THEN
+        UPDATE public.form_submissions
+           SET reference = reference || '-' || n
+         WHERE id = r.id;
+      END IF;
+    END LOOP;
+  END LOOP;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_form_submissions_reference
+  ON public.form_submissions (reference) WHERE reference IS NOT NULL;
+
+-- Mirrors the step walk the browser used to do: a notify step needs no
+-- human, and a payment step is done once the fee is in. Stops at the first
+-- approval step or an unpaid payment step.
+CREATE OR REPLACE FUNCTION public.form_skip_auto(p_workflow jsonb, p_from integer, p_fee_status text)
+ RETURNS integer
+ LANGUAGE plpgsql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_i integer := greatest(coalesce(p_from, 0), 0); v_n integer; v_type text;
+BEGIN
+  v_n := jsonb_array_length(coalesce(p_workflow, '[]'::jsonb));
+  WHILE v_i < v_n LOOP
+    v_type := p_workflow -> v_i ->> 'type';
+    IF v_type = 'notify' THEN v_i := v_i + 1;
+    ELSIF v_type = 'payment' AND p_fee_status = 'paid' THEN v_i := v_i + 1;
+    ELSE EXIT;
+    END IF;
+  END LOOP;
+  RETURN v_i;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.form_status_for(p_workflow jsonb, p_step integer)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+  SELECT CASE
+    WHEN p_step >= jsonb_array_length(coalesce(p_workflow, '[]'::jsonb)) THEN 'completed'
+    WHEN p_step = 0 THEN 'submitted'
+    ELSE 'in_review' END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.form_event(p_submission_id uuid, p_type text, p_actor text, p_step text, p_note text)
+ RETURNS void
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  INSERT INTO form_submission_events (submission_id, type, actor, step_name, note)
+  VALUES (p_submission_id, p_type, nullif(p_actor, ''), nullif(p_step, ''), nullif(p_note, ''));
+$function$;
+
+CREATE OR REPLACE FUNCTION public.submit_form(
+  p_form_id uuid,
+  p_values jsonb,
+  p_applicant_name text DEFAULT NULL,
+  p_applicant_phone text DEFAULT NULL,
+  p_notes text DEFAULT NULL
+)
+ RETURNS public.form_submissions
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp   employees;
+  v_def   form_defs;
+  v_field jsonb;
+  v_val   jsonb;
+  v_title text;
+  v_step  integer;
+  v_fee   numeric;
+  v_sub   form_submissions;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  SELECT * INTO v_def FROM form_defs WHERE id = p_form_id;
+  IF v_def.id IS NULL THEN RAISE EXCEPTION 'Form not found'; END IF;
+  IF NOT coalesce(v_def.is_published, false) THEN
+    RAISE EXCEPTION 'Form "%" is not published', v_def.name;
+  END IF;
+
+  -- Required fields are checked here as well as in the browser. A rule
+  -- that only exists in the client is not a rule.
+  FOR v_field IN SELECT f FROM jsonb_array_elements(coalesce(v_def.schema, '[]'::jsonb)) f LOOP
+    CONTINUE WHEN coalesce(v_field->>'type', '') = 'section';
+    CONTINUE WHEN NOT coalesce((v_field->>'required')::boolean, false);
+    v_val := coalesce(p_values, '{}'::jsonb) -> (v_field->>'key');
+    IF v_val IS NULL OR v_val = 'null'::jsonb OR v_val = '""'::jsonb OR v_val = 'false'::jsonb THEN
+      RAISE EXCEPTION '% is required', coalesce(v_field->>'label', v_field->>'key');
+    END IF;
+  END LOOP;
+
+  -- Title: the field flagged isTitle, else the first text field, else the
+  -- form's own name — the same order the builder documents.
+  SELECT coalesce(p_values ->> (f->>'key'), '') INTO v_title
+    FROM jsonb_array_elements(coalesce(v_def.schema, '[]'::jsonb)) f
+   WHERE coalesce((f->>'isTitle')::boolean, false)
+   LIMIT 1;
+  IF coalesce(v_title, '') = '' THEN
+    SELECT coalesce(p_values ->> (f->>'key'), '') INTO v_title
+      FROM jsonb_array_elements(coalesce(v_def.schema, '[]'::jsonb)) f
+     WHERE f->>'type' IN ('text', 'textarea')
+     LIMIT 1;
+  END IF;
+  IF coalesce(v_title, '') = '' THEN v_title := v_def.name; END IF;
+
+  v_step := form_skip_auto(v_def.workflow, 0, 'none');
+  v_fee  := CASE WHEN EXISTS (
+      SELECT 1 FROM jsonb_array_elements(coalesce(v_def.workflow, '[]'::jsonb)) s WHERE s->>'type' = 'payment')
+    THEN coalesce(v_def.fee_amount, 0) ELSE 0 END;
+
+  INSERT INTO form_submissions (
+    form_id, reference, series_code, title, values, status, current_step,
+    submitted_by, applicant_name, applicant_phone, notes,
+    fee_amount, fee_currency, fee_status
+  ) VALUES (
+    p_form_id, allocate_document_number('FORM'), 'FORM', v_title, coalesce(p_values, '{}'::jsonb),
+    form_status_for(v_def.workflow, v_step), v_step,
+    v_emp.id, p_applicant_name, p_applicant_phone, p_notes,
+    v_fee, coalesce(v_def.fee_currency, 'USD'), 'none'
+  )
+  RETURNING * INTO v_sub;
+
+  PERFORM form_event(v_sub.id, 'submitted', v_emp.name, NULL, v_title);
+  RETURN v_sub;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.submit_form(uuid, jsonb, text, text, text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.process_form_submission(p_submission_id uuid, p_action text, p_note text DEFAULT '')
+ RETURNS public.form_submissions
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp     employees;
+  v_sub     form_submissions;
+  v_def     form_defs;
+  v_cur     jsonb;
+  v_allowed text[];
+  v_roles   text[];
+  v_priv    boolean;
+  v_next    integer;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  v_priv  := EXISTS (SELECT 1 FROM unnest(v_emp.roles) r WHERE lower(r) IN ('admin', 'founder'));
+  v_roles := effective_roles(v_emp.id, CURRENT_DATE);
+
+  SELECT * INTO v_sub FROM form_submissions WHERE id = p_submission_id FOR UPDATE;
+  IF v_sub.id IS NULL THEN RAISE EXCEPTION 'Submission not found'; END IF;
+  IF v_sub.status IN ('rejected', 'completed') THEN
+    RAISE EXCEPTION 'This submission is already %', v_sub.status;
+  END IF;
+
+  SELECT * INTO v_def FROM form_defs WHERE id = v_sub.form_id;
+  IF v_def.id IS NULL THEN RAISE EXCEPTION 'The form behind this submission no longer exists'; END IF;
+
+  v_cur := v_def.workflow -> v_sub.current_step;
+  IF v_cur IS NULL THEN RAISE EXCEPTION 'There is no step to act on'; END IF;
+  IF coalesce(v_cur->>'type', '') <> 'approval' THEN
+    RAISE EXCEPTION 'Step "%" is not an approval step', coalesce(v_cur->>'name', '');
+  END IF;
+
+  -- Separation of duties, same rule documents already follow.
+  IF v_sub.submitted_by = v_emp.id AND NOT v_priv THEN
+    RAISE EXCEPTION 'You cannot action your own submission';
+  END IF;
+
+  -- An empty allowedRoles means any employee may take the step. That is
+  -- the builder's documented default and is kept deliberately.
+  v_allowed := ARRAY(SELECT jsonb_array_elements_text(coalesce(v_cur->'allowedRoles', '[]'::jsonb)));
+  IF array_length(v_allowed, 1) IS NOT NULL AND NOT v_priv AND NOT EXISTS (
+    SELECT 1 FROM unnest(v_roles) er JOIN unnest(v_allowed) ar ON lower(er) = lower(ar)
+  ) THEN
+    RAISE EXCEPTION 'Your role is not authorized to approve step "%"', coalesce(v_cur->>'name', '');
+  END IF;
+
+  IF p_action = 'approve' THEN
+    v_next := form_skip_auto(v_def.workflow, v_sub.current_step + 1, v_sub.fee_status);
+    UPDATE form_submissions
+       SET current_step = v_next,
+           status = form_status_for(v_def.workflow, v_next),
+           updated_at = now()
+     WHERE id = p_submission_id
+    RETURNING * INTO v_sub;
+    PERFORM form_event(p_submission_id, 'approved', v_emp.name, v_cur->>'name', p_note);
+  ELSIF p_action = 'reject' THEN
+    UPDATE form_submissions SET status = 'rejected', updated_at = now()
+     WHERE id = p_submission_id
+    RETURNING * INTO v_sub;
+    PERFORM form_event(p_submission_id, 'rejected', v_emp.name, v_cur->>'name', p_note);
+  ELSE
+    RAISE EXCEPTION 'Unknown action: %', p_action;
+  END IF;
+
+  RETURN v_sub;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.process_form_submission(uuid, text, text) TO authenticated;
+
+-- Asking for the fee. The edge function used to write fee_status straight
+-- to the row on the CALLER's connection, which is why the table needed an
+-- open UPDATE policy in the first place. It goes through here now, and it
+-- can only ever set 'requested' — never 'paid'.
+CREATE OR REPLACE FUNCTION public.request_fee(
+  p_table text, p_id uuid, p_amount numeric, p_currency text, p_provider_ref text DEFAULT NULL)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF NOT is_employee() THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+  IF p_table NOT IN ('form_submissions', 'connect_requests') THEN
+    RAISE EXCEPTION 'Fees cannot be requested against %', p_table;
+  END IF;
+  IF coalesce(p_amount, 0) <= 0 THEN RAISE EXCEPTION 'A fee must be more than zero'; END IF;
+
+  IF p_table = 'form_submissions' THEN
+    UPDATE form_submissions
+       SET fee_amount = p_amount, fee_currency = coalesce(p_currency, 'USD'),
+           fee_status = 'requested', fee_provider_ref = p_provider_ref, updated_at = now()
+     WHERE id = p_id AND fee_status <> 'paid';
+    IF FOUND THEN
+      PERFORM form_event(p_id, 'fee_requested', NULL, NULL,
+                         p_amount || ' ' || coalesce(p_currency, 'USD'));
+    END IF;
+  ELSE
+    UPDATE connect_requests
+       SET fee_amount = p_amount, fee_currency = coalesce(p_currency, 'USD'),
+           fee_status = 'requested', fee_provider_ref = p_provider_ref
+     WHERE id = p_id AND fee_status <> 'paid';
+  END IF;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.request_fee(text, uuid, numeric, text, text) TO authenticated;
+
+-- The manual "mark paid" override, for the 'manual' provider where
+-- settlement is reconciled by hand. In production the bank/PSP webhook is
+-- the authority; this is not something an ordinary user should be able to
+-- do to their own application.
+CREATE OR REPLACE FUNCTION public.record_form_fee_paid(p_submission_id uuid, p_note text DEFAULT '')
+ RETURNS public.form_submissions
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_emp employees; v_sub form_submissions;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM unnest(v_emp.roles) r
+                  WHERE lower(r) IN ('admin', 'founder', 'manager', 'accountant')) THEN
+    RAISE EXCEPTION 'Only somebody who handles money may mark a fee paid by hand';
+  END IF;
+
+  SELECT * INTO v_sub FROM form_submissions WHERE id = p_submission_id FOR UPDATE;
+  IF v_sub.id IS NULL THEN RAISE EXCEPTION 'Submission not found'; END IF;
+  IF v_sub.fee_status = 'paid' THEN RAISE EXCEPTION 'This fee is already recorded as paid'; END IF;
+  IF coalesce(v_sub.fee_amount, 0) <= 0 THEN RAISE EXCEPTION 'There is no fee on this submission'; END IF;
+
+  UPDATE form_submissions SET fee_status = 'paid', updated_at = now()
+   WHERE id = p_submission_id
+  RETURNING * INTO v_sub;
+
+  PERFORM form_event(p_submission_id, 'fee_paid', v_emp.name, NULL,
+                     coalesce(nullif(p_note, ''), v_sub.fee_amount || ' ' || v_sub.fee_currency));
+  RETURN v_sub;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.record_form_fee_paid(uuid, text) TO authenticated;
+
+-- A paid fee moves the submission on by itself. Before this, the MANUAL
+-- path advanced the step in the browser and the real WEBHOOK path did not
+-- — so a submission paid for through the bank sat on its payment step
+-- forever while one paid by hand went through. Same rule for both now, and
+-- it fires wherever the payment came from.
+CREATE OR REPLACE FUNCTION public.form_advance_on_payment()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_flow jsonb; v_next integer;
+BEGIN
+  IF NEW.fee_status <> 'paid' OR coalesce(OLD.fee_status, '') = 'paid' THEN RETURN NEW; END IF;
+  IF NEW.status IN ('rejected', 'completed') THEN RETURN NEW; END IF;
+
+  SELECT workflow INTO v_flow FROM form_defs WHERE id = NEW.form_id;
+  v_flow := coalesce(v_flow, '[]'::jsonb);
+  v_next := form_skip_auto(v_flow, NEW.current_step, 'paid');
+  NEW.current_step := v_next;
+  NEW.status := form_status_for(v_flow, v_next);
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS trg_form_advance_on_payment ON public.form_submissions;
+CREATE TRIGGER trg_form_advance_on_payment
+  BEFORE UPDATE OF fee_status ON public.form_submissions
+  FOR EACH ROW EXECUTE FUNCTION public.form_advance_on_payment();
+
+CREATE OR REPLACE FUNCTION public.add_form_note(p_submission_id uuid, p_note text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_emp employees;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+  IF coalesce(trim(p_note), '') = '' THEN RAISE EXCEPTION 'A note cannot be empty'; END IF;
+  PERFORM form_event(p_submission_id, 'note', v_emp.name, NULL, p_note);
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.add_form_note(uuid, text) TO authenticated;
+
+-- Close the hole. No client may write a submission or forge an event; the
+-- functions above are SECURITY DEFINER and are the only way in.
+DROP POLICY IF EXISTS "Create form submissions" ON public.form_submissions;
+DROP POLICY IF EXISTS "Update form submissions" ON public.form_submissions;
+DROP POLICY IF EXISTS "Append form submission events" ON public.form_submission_events;
+
+-- =====================================================================
+-- 12. ONE INBOX
+-- Two engines meant two "waiting for you" lists — the Documents Approvals
+-- tab and the Forms Submissions tab — so a staff member had to check both
+-- and neither could tell them what was late. This returns both, ordered by
+-- how overdue they are.
+-- =====================================================================
+DROP FUNCTION IF EXISTS public.my_action_inbox();
+CREATE OR REPLACE FUNCTION public.my_action_inbox()
+ RETURNS TABLE (
+   out_kind      text,      -- document | form
+   out_id        uuid,
+   out_reference text,
+   out_title     text,
+   out_step      text,
+   out_since     timestamp with time zone,
+   out_due_date  date,
+   out_overdue   boolean
+ )
+ LANGUAGE plpgsql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_emp employees; v_roles text[]; v_priv boolean;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RETURN; END IF;
+
+  v_priv  := EXISTS (SELECT 1 FROM unnest(v_emp.roles) r WHERE lower(r) IN ('admin', 'founder'));
+  v_roles := effective_roles(v_emp.id, CURRENT_DATE);
+
+  RETURN QUERY
+  -- Document requests sitting on a step this person may take.
+  SELECT 'document'::text, d.id, d.reference, d.title,
+         (SELECT s->>'name' FROM jsonb_array_elements(
+            coalesce(d.workflow_snapshot, t.workflow, '[]'::jsonb)) s
+           WHERE s->>'id' = d.current_step_id LIMIT 1),
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+    LEFT JOIN document_templates t ON t.id = d.template_id
+   WHERE d.status = 'pending'
+     AND d.current_step_id IS NOT NULL
+     AND d.requester_id IS DISTINCT FROM v_emp.id
+     AND EXISTS (
+       SELECT 1 FROM jsonb_array_elements(coalesce(d.workflow_snapshot, t.workflow, '[]'::jsonb)) s
+        WHERE s->>'id' = d.current_step_id
+          AND (v_priv OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(coalesce(s->'allowedRoles', '[]'::jsonb)) ar
+              JOIN unnest(v_roles) er ON lower(er) = lower(ar))))
+
+  UNION ALL
+  -- The requester's own returned items: theirs to fix, and they are the
+  -- only person who can move them, so they belong in the same list.
+  SELECT 'document'::text, d.id, d.reference, d.title, NULL,
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+   WHERE d.status = 'returned' AND d.requester_id = v_emp.id
+
+  UNION ALL
+  -- Files carried by this person that nothing else is waiting on: an
+  -- incoming letter is somebody's to answer even with no approval chain.
+  SELECT 'document'::text, d.id, d.reference, d.title, NULL,
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+   WHERE d.action_officer_id = v_emp.id
+     AND d.closed_at IS NULL
+     AND d.status NOT IN ('void', 'rejected')
+     AND d.current_step_id IS NULL
+
+  UNION ALL
+  -- Form submissions on an approval step this person may take. An empty
+  -- allowedRoles means any employee, matching the builder's default.
+  SELECT 'form'::text, fs.id, fs.reference, fs.title,
+         fd.workflow -> fs.current_step ->> 'name',
+         fs.updated_at, NULL::date, false
+    FROM form_submissions fs
+    JOIN form_defs fd ON fd.id = fs.form_id
+   WHERE fs.status IN ('submitted', 'in_review')
+     AND fs.submitted_by IS DISTINCT FROM v_emp.id
+     AND (fd.workflow -> fs.current_step ->> 'type') = 'approval'
+     AND (v_priv
+          OR jsonb_array_length(coalesce(fd.workflow -> fs.current_step -> 'allowedRoles', '[]'::jsonb)) = 0
+          OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(
+                          coalesce(fd.workflow -> fs.current_step -> 'allowedRoles', '[]'::jsonb)) ar
+              JOIN unnest(v_roles) er ON lower(er) = lower(ar)))
+
+  ORDER BY 8 DESC, 7 ASC NULLS LAST, 6 ASC;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.my_action_inbox() TO authenticated;
