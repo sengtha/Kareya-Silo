@@ -299,7 +299,156 @@ DROP TABLE public.some_future_clinical_table;
 \echo 'ALL HOSPITAL ASSERTIONS PASSED'
 
 \echo '== 10. the lab is now attached to the patient index'
-INSERT INTO lab_samples (id, accession_no, patient_id, patient_name, domain, status)
+INSERT INTO lab_samples (id, accession_number, patient_id, patient_name, domain, status)
 VALUES ('77777777-0000-0000-0000-000000000001', 'ACC-1', 'aaaaaaaa-0000-0000-0000-000000000001', 'Sreyla Chan', 'clinical', 'received');
 SELECT ok((SELECT count(*) FROM lab_samples WHERE patient_id = 'aaaaaaaa-0000-0000-0000-000000000001') = 1,
           'a lab sample can be attached to a patient record by id, not by typed name');
+
+\echo '== 11. payers, coverage and the split'
+INSERT INTO payers (id, code, name, kind) VALUES
+  ('50000000-0000-0000-0000-000000000001', 'HEF', 'Equity scheme', 'equity_fund'),
+  ('50000000-0000-0000-0000-000000000002', 'PRIV', 'Private insurer', 'private_insurance');
+
+-- Rules are the hospital's own; these are test figures, not real ones.
+INSERT INTO payer_coverage (payer_id, charge_kind, covered_pct) VALUES
+  ('50000000-0000-0000-0000-000000000001', NULL, 100);          -- covers everything
+INSERT INTO payer_coverage (payer_id, charge_kind, covered_pct, per_item_ceiling) VALUES
+  ('50000000-0000-0000-0000-000000000002', NULL, 80, NULL),      -- 80% default
+  ('50000000-0000-0000-0000-000000000002', 'drug', 50, 10),      -- 50% of drugs, max 10
+  ('50000000-0000-0000-0000-000000000002', 'bed', 0, NULL);      -- explicitly no bed cover
+
+SELECT ok(covered_amount('50000000-0000-0000-0000-000000000002', 'lab', 100) = 80,
+          'the default rule gives 80 of 100');
+SELECT ok(covered_amount('50000000-0000-0000-0000-000000000002', 'drug', 100) = 10,
+          'a per-item ceiling caps the drug cover at 10, not 50');
+SELECT ok(covered_amount('50000000-0000-0000-0000-000000000002', 'bed', 100) = 0,
+          'an explicit 0% rule beats the default, so beds are not covered');
+SELECT ok(covered_amount('50000000-0000-0000-0000-000000000001', 'anything', 100) = 100,
+          'a 100% scheme covers the lot');
+-- A payer with no rule at all must cover nothing, never an assumed default.
+INSERT INTO payers (id, code, name) VALUES ('50000000-0000-0000-0000-000000000003', 'NORULE', 'No rules yet');
+SELECT ok(covered_amount('50000000-0000-0000-0000-000000000003', 'lab', 100) = 0,
+          'a payer with no configured rule covers nothing');
+
+-- Membership validity is judged on the CHARGE date, not today.
+INSERT INTO patient_coverage (patient_id, payer_id, membership_no, valid_from, valid_to)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000002', '50000000-0000-0000-0000-000000000002',
+        'P-77', CURRENT_DATE - 30, CURRENT_DATE + 30);
+
+SELECT ok((SELECT out_payer FROM coverage_for('aaaaaaaa-0000-0000-0000-000000000002', CURRENT_DATE)) = 'Private insurer',
+          'an in-date card is found');
+SELECT ok(NOT EXISTS (SELECT 1 FROM coverage_for('aaaaaaaa-0000-0000-0000-000000000002', CURRENT_DATE - 60)),
+          'the same card does not cover a date before it was issued');
+SELECT ok(NOT EXISTS (SELECT 1 FROM coverage_for('aaaaaaaa-0000-0000-0000-000000000002', CURRENT_DATE + 60)),
+          'nor a date after it expired');
+
+-- A charge is split as it is created.
+INSERT INTO hospital_charges (id, patient_id, kind, description, quantity, unit_price)
+VALUES ('60000000-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000002',
+        'lab', 'Blood film', 1, 100);
+SELECT ok((SELECT scheme_amount FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000001') = 80,
+          'the scheme takes 80');
+SELECT ok((SELECT patient_amount FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000001') = 20,
+          'and the patient owes the remaining 20');
+
+INSERT INTO hospital_charges (id, patient_id, kind, description, quantity, unit_price)
+VALUES ('60000000-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000002',
+        'bed', 'Ward B', 1, 25);
+SELECT ok((SELECT patient_amount FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000002') = 25,
+          'an uncovered kind falls entirely to the patient');
+
+-- The two halves must always reconstruct the whole.
+SELECT ok(NOT EXISTS (SELECT 1 FROM hospital_charges
+                       WHERE round(scheme_amount + patient_amount, 2) <> round(amount, 2)),
+          'every charge in the table has a split that adds up');
+SELECT raises($$UPDATE hospital_charges SET scheme_amount = 999
+                WHERE id = '60000000-0000-0000-0000-000000000001'$$,
+              'a scheme share larger than the charge is REFUSED, not silently clamped');
+SELECT ok((SELECT scheme_amount FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000001') = 80,
+          'and the original split survived the attempt');
+SELECT raises($$UPDATE hospital_charges SET scheme_amount = -5
+                WHERE id = '60000000-0000-0000-0000-000000000001'$$,
+              'a negative scheme share is refused');
+
+-- An uninsured patient owes everything.
+INSERT INTO hospital_charges (id, patient_id, kind, description, quantity, unit_price)
+VALUES ('60000000-0000-0000-0000-000000000003', 'aaaaaaaa-0000-0000-0000-000000000001',
+        'lab', 'Uninsured test', 1, 40);
+SELECT ok((SELECT patient_amount FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000003') = 40,
+          'a patient with no scheme owes the whole charge');
+
+\echo '== 12. claims'
+SELECT create_payer_claim('50000000-0000-0000-0000-000000000002', CURRENT_DATE - 1, CURRENT_DATE + 1) AS clm \gset
+SELECT ok((SELECT claimed_amount FROM payer_claims WHERE id = :'clm') = 80,
+          'the claim totals the scheme share only');
+SELECT ok((SELECT claim_no FROM payer_claims WHERE id = :'clm') LIKE 'CLM-%-00001', 'it gets a claim number');
+SELECT raises($$SELECT create_payer_claim('50000000-0000-0000-0000-000000000002', CURRENT_DATE - 1, CURRENT_DATE + 1)$$,
+              'the same charges cannot be claimed twice');
+SELECT raises(format($$SELECT apply_coverage('60000000-0000-0000-0000-000000000001')$$),
+              'a claimed charge cannot have its split recomputed');
+
+SELECT submit_payer_claim(:'clm', 'THEIR-REF-1');
+SELECT ok((SELECT status FROM payer_claims WHERE id = :'clm') = 'submitted', 'submitting moves it on');
+SELECT raises(format($$SELECT submit_payer_claim(%L)$$, :'clm'), 'submitting twice is refused');
+
+-- Short payment is normal, and the shortfall must stay visible.
+SELECT ok(settle_payer_claim(:'clm', 60) = 'part_paid', 'a short payment is part_paid, not paid');
+SELECT ok((SELECT out_shortfall FROM payer_receivables()
+            WHERE out_payer = 'Private insurer') = 20,
+          'the 20 shortfall is reported, not written off');
+SELECT ok(settle_payer_claim(:'clm', 80) = 'paid', 'paying the rest closes it');
+SELECT raises(format($$SELECT settle_payer_claim(%L, 10)$$, :'clm'), 'a paid claim cannot be settled again');
+
+-- Rejection releases the charges so they can be corrected and re-claimed.
+INSERT INTO hospital_charges (id, patient_id, kind, description, quantity, unit_price)
+VALUES ('60000000-0000-0000-0000-000000000004', 'aaaaaaaa-0000-0000-0000-000000000002',
+        'lab', 'Second test', 1, 50);
+SELECT create_payer_claim('50000000-0000-0000-0000-000000000002', CURRENT_DATE - 1, CURRENT_DATE + 1) AS clm2 \gset
+SELECT submit_payer_claim(:'clm2');
+SELECT raises(format($$SELECT reject_payer_claim(%L, '')$$, :'clm2'), 'a rejection without a reason is refused');
+SELECT ok(reject_payer_claim(:'clm2', 'Missing referral letter') = 1, 'rejecting releases its one charge');
+SELECT ok((SELECT claim_id FROM hospital_charges WHERE id = '60000000-0000-0000-0000-000000000004') IS NULL,
+          'the released charge is claimable again');
+SELECT ok((SELECT out_unclaimed FROM payer_receivables() WHERE out_payer = 'Private insurer') = 40,
+          'and it shows up as unclaimed once more');
+
+\echo '== 13. the patient is billed only their own share'
+INSERT INTO patient_coverage (patient_id, payer_id, valid_from)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000002', '50000000-0000-0000-0000-000000000001', CURRENT_DATE - 1);
+-- Priority: the equity fund was added second but both are priority 100,
+-- so created_at breaks the tie and the private insurer still wins.
+SELECT ok((SELECT out_payer FROM coverage_for('aaaaaaaa-0000-0000-0000-000000000002', CURRENT_DATE)) = 'Private insurer',
+          'with equal priority the older card wins, deterministically');
+UPDATE patient_coverage SET priority = 1
+ WHERE patient_id = 'aaaaaaaa-0000-0000-0000-000000000002'
+   AND payer_id = '50000000-0000-0000-0000-000000000001';
+SELECT ok((SELECT out_payer FROM coverage_for('aaaaaaaa-0000-0000-0000-000000000002', CURRENT_DATE)) = 'Equity scheme',
+          'a lower priority number takes precedence');
+
+INSERT INTO hospital_beds (id, ward_id, code, daily_rate)
+VALUES ('bbbbbbbb-0000-0000-0000-000000000003', 'cccccccc-0000-0000-0000-000000000001', 'A-03', 30);
+SELECT admit_patient('aaaaaaaa-0000-0000-0000-000000000002', 'bbbbbbbb-0000-0000-0000-000000000003') AS adm2 \gset
+SELECT post_bed_day_charges(CURRENT_DATE);
+SELECT ok((SELECT scheme_amount FROM hospital_charges WHERE admission_id = :'adm2' AND kind = 'bed') = 30,
+          'the equity scheme covers the whole bed-day');
+SELECT ok((SELECT patient_amount FROM hospital_charges WHERE admission_id = :'adm2' AND kind = 'bed') = 0,
+          'so the patient owes nothing for it');
+SELECT raises(format($$SELECT assemble_discharge_bill(%L)$$, :'adm2'),
+              'a fully covered admission raises no patient invoice at all');
+
+\echo '== 14. statistics'
+SELECT ok((SELECT out_value FROM hospital_statistics(CURRENT_DATE - 1, CURRENT_DATE + 1)
+            WHERE out_metric = 'admissions') >= 2, 'admissions are counted');
+SELECT ok((SELECT out_value FROM hospital_statistics(CURRENT_DATE - 1, CURRENT_DATE + 1)
+            WHERE out_metric = 'discharges') >= 1, 'discharges are counted');
+SELECT ok((SELECT out_value FROM hospital_statistics(CURRENT_DATE - 1, CURRENT_DATE + 1)
+            WHERE out_metric = 'bed_days') >= 2, 'bed-days come from the bed charges');
+SELECT ok((SELECT count(*) FROM admission_breakdown(CURRENT_DATE - 1, CURRENT_DATE + 1)) >= 1,
+          'the breakdown groups admissions');
+-- Age must be computed at admission, not at report time.
+SELECT ok((SELECT out_age_band FROM admission_breakdown(CURRENT_DATE - 1, CURRENT_DATE + 1)
+            WHERE out_sex = 'unknown' LIMIT 1) IS NOT NULL,
+          'a patient with no date of birth lands in a band rather than vanishing');
+
+\echo ''
+\echo 'ALL PAYER ASSERTIONS PASSED'

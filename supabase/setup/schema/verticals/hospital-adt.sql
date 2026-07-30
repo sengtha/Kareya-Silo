@@ -191,7 +191,8 @@ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_known text[] := ARRAY['clinic_appointments','encounters','prescriptions','clinic_invoices',
                           'lab_samples','opd_queue_tickets','hospital_admissions','hospital_charges',
-                          'patient_observations','medication_administrations','clinical_orders','patients'];
+                          'patient_observations','medication_administrations','clinical_orders',
+                          'patient_coverage','patients'];
   v_unknown text;
   v_table text;
 BEGIN
@@ -600,6 +601,12 @@ CREATE TABLE IF NOT EXISTS public.hospital_charges (
   source_id uuid,
   charged_by uuid,
   invoice_id uuid,                          -- set once billed; never cleared
+  -- How the charge divides. These live HERE rather than in the payer
+  -- vertical so that the discharge bill is scheme-aware whichever file
+  -- installs first: with no payer, scheme_amount stays 0 and the patient
+  -- owes the lot, which is exactly right for a self-paying hospital.
+  scheme_amount numeric DEFAULT 0,
+  patient_amount numeric DEFAULT 0,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT hospital_charges_pkey PRIMARY KEY (id),
   CONSTRAINT hospital_charges_patient_fkey FOREIGN KEY (patient_id) REFERENCES public.patients(id) ON DELETE CASCADE,
@@ -611,6 +618,9 @@ CREATE TABLE IF NOT EXISTS public.hospital_charges (
   CONSTRAINT hospital_charges_kind_check CHECK (kind = ANY (ARRAY['bed','consultation','procedure','lab','radiology','drug','consumable','other'])),
   CONSTRAINT hospital_charges_qty_check CHECK (quantity > 0)
 );
+ALTER TABLE public.hospital_charges ADD COLUMN IF NOT EXISTS scheme_amount numeric DEFAULT 0;
+ALTER TABLE public.hospital_charges ADD COLUMN IF NOT EXISTS patient_amount numeric DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS idx_hospital_charges_admission ON public.hospital_charges (admission_id);
 CREATE INDEX IF NOT EXISTS idx_hospital_charges_unbilled
   ON public.hospital_charges (patient_id) WHERE invoice_id IS NULL;
@@ -620,17 +630,42 @@ CREATE INDEX IF NOT EXISTS idx_hospital_charges_unbilled
 CREATE UNIQUE INDEX IF NOT EXISTS uq_hospital_charges_bed_day
   ON public.hospital_charges (admission_id, charge_date) WHERE kind = 'bed';
 
+/** The two halves always add up to the whole. Whatever a scheme does not
+ *  cover is the patient's, and there is nowhere for a rounding remainder
+ *  to hide — that remainder is somebody's money.
+ *
+ *  A scheme share larger than the charge RAISES rather than being clamped
+ *  down. Clamping was the first version and it was wrong: typing 999 for
+ *  99 would have quietly set the patient's share to zero, which reads on
+ *  every screen afterwards as though somebody had decided that. The
+ *  legitimate paths cannot exceed the charge — covered_amount() bounds
+ *  its own result — so anything that does is a mistake worth stopping. */
 CREATE OR REPLACE FUNCTION public.hosp_charge_amount()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   NEW.amount := round(coalesce(NEW.quantity, 1) * coalesce(NEW.unit_price, 0), 2);
+  NEW.scheme_amount := coalesce(NEW.scheme_amount, 0);
+  IF NEW.scheme_amount < 0 THEN
+    RAISE EXCEPTION 'A scheme cannot pay a negative amount';
+  END IF;
+  IF round(NEW.scheme_amount, 2) > round(NEW.amount, 2) THEN
+    RAISE EXCEPTION 'The scheme share (%) is more than the charge (%). Recompute the coverage instead.',
+      NEW.scheme_amount, NEW.amount;
+  END IF;
+  NEW.patient_amount := NEW.amount - NEW.scheme_amount;
   RETURN NEW;
 END $$;
 
 DROP TRIGGER IF EXISTS trg_hosp_charge_amount ON public.hospital_charges;
 CREATE TRIGGER trg_hosp_charge_amount
-  BEFORE INSERT OR UPDATE OF quantity, unit_price ON public.hospital_charges
+  BEFORE INSERT OR UPDATE OF quantity, unit_price, scheme_amount ON public.hospital_charges
   FOR EACH ROW EXECUTE FUNCTION public.hosp_charge_amount();
+
+DO $c$ BEGIN
+  ALTER TABLE public.hospital_charges ADD CONSTRAINT hospital_charges_split_check
+    CHECK (scheme_amount >= 0 AND patient_amount >= 0
+       AND round(scheme_amount + patient_amount, 2) = round(amount, 2));
+EXCEPTION WHEN duplicate_object THEN NULL; END $c$;
 
 /** A billed charge is history. Editing one after it has been invoiced
  *  would silently change a document the patient is holding. */
@@ -645,6 +680,8 @@ BEGIN
   END IF;
   IF OLD.invoice_id IS NOT NULL
      AND (NEW.amount IS DISTINCT FROM OLD.amount
+       OR NEW.scheme_amount IS DISTINCT FROM OLD.scheme_amount
+       OR NEW.patient_amount IS DISTINCT FROM OLD.patient_amount
        OR NEW.description IS DISTINCT FROM OLD.description
        OR NEW.quantity IS DISTINCT FROM OLD.quantity
        OR NEW.unit_price IS DISTINCT FROM OLD.unit_price) THEN
@@ -702,10 +739,13 @@ BEGIN
   SELECT * INTO v_adm FROM public.hospital_admissions WHERE id = p_admission;
   IF NOT FOUND THEN RAISE EXCEPTION 'Admission not found'; END IF;
 
-  SELECT sum(amount) INTO v_total
+  -- The patient's share only. What a scheme covers is claimed from the
+  -- scheme; putting it on the patient's invoice is how somebody entitled
+  -- to free care ends up being asked for money.
+  SELECT sum(patient_amount) INTO v_total
     FROM public.hospital_charges WHERE admission_id = p_admission AND invoice_id IS NULL;
   IF coalesce(v_total, 0) = 0 THEN
-    RAISE EXCEPTION 'There is nothing left to bill on this admission';
+    RAISE EXCEPTION 'There is nothing left for the patient to pay on this admission';
   END IF;
 
   INSERT INTO public.clinic_invoices (patient_id, date, status, subtotal, tax, total, notes)
@@ -721,9 +761,9 @@ BEGIN
                      WHEN 'consumable' THEN 'service'
                      WHEN 'radiology' THEN 'procedure'
                      ELSE c.kind END,
-         c.quantity, c.unit_price, c.amount
+         c.quantity, c.unit_price, c.patient_amount
     FROM public.hospital_charges c
-   WHERE c.admission_id = p_admission AND c.invoice_id IS NULL
+   WHERE c.admission_id = p_admission AND c.invoice_id IS NULL AND c.patient_amount > 0
    ORDER BY c.charge_date, c.created_at;
 
   UPDATE public.hospital_charges SET invoice_id = v_invoice
