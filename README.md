@@ -86,7 +86,11 @@ with realized/unrealized FX gain and loss, the CIFRS for SMEs chart
 mapping, the annual tax on income with GDT tax depreciation, the payroll
 configuration for NSSF, salary tax and seniority, the evidence-based
 staff evaluation, and Cambodia labour compliance — contracts, seniority
-payouts, overtime bands, work permits, maternity and fringe benefit tax).
+payouts, overtime bands, work permits, maternity and fringe benefit tax),
+along with the quoting engines that came later (construction estimating and
+valuation, garment costing from SMV, freight chargeable weight and weight
+breaks, tour itinerary costing and selling, event quoting), the shared
+cross-module discount engine, and internal meeting-room booking.
 Each file creates its own tables, indexes and RLS policies, and all of them
 are idempotent, so re-running the folder is always safe.
 
