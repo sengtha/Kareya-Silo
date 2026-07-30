@@ -34,9 +34,17 @@ Deno.serve(async (req) => {
   if (cfgErr) return json({ error: 'Unauthorized' }, 401)
   const provider = cfg?.provider || 'manual'
 
-  // Mark the target row as fee 'requested' (RLS: caller is an employee).
+  // Mark the target row as fee 'requested'. This goes through request_fee()
+  // rather than a direct UPDATE: the row's own write policy was dropped so
+  // no client could set fee_status to 'paid', and this function runs on the
+  // CALLER's connection, so it is a client for that purpose. request_fee()
+  // can only ever set 'requested'.
   const providerRef = `PAY-${reference}`
-  await caller.from(targetTable).update({ fee_amount: amount, fee_currency: currency || 'USD', fee_status: 'requested', fee_provider_ref: providerRef }).eq('id', targetId)
+  const { error: feeErr } = await caller.rpc('request_fee', {
+    p_table: targetTable, p_id: targetId, p_amount: amount,
+    p_currency: currency || 'USD', p_provider_ref: providerRef,
+  })
+  if (feeErr) return json({ error: feeErr.message }, 400)
 
   if (provider === 'manual') {
     // App renders an in-app KHQR from the payee's Bakong account; settlement is

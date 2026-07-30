@@ -8,7 +8,41 @@ const corsHeaders = {
 
 // 🌍 DEFAULT KAREYA HUB CONFIGURATION
 // Override via edge-function secrets HUB_URL / HUB_ANON_KEY on this Silo.
-const DEFAULT_HUB_URL = 'https://nwfipfbdhksucqdsyaho.supabase.co'
+//
+// HUB_URL is the Hub's SUPABASE API host — not the web app. hub.kareya.io is
+// the custom domain in front of Supabase project nwfipfbdhksucqdsyaho;
+// kareya.io serves the React app and would 404 every RPC made here.
+// If the custom domain is ever unavailable, set HUB_URL on this Silo to
+// https://nwfipfbdhksucqdsyaho.supabase.co — the same project, addressed
+// directly.
+const DEFAULT_HUB_URL = 'https://hub.kareya.io'
+
+// The Hub anon key is public by design (it is shipped in the Kareya browser
+// bundle) and grants nothing on its own — every table behind it is under RLS,
+// and redeem_silo_ticket does its own membership check. Defaulting it means a
+// Silo can redeem tickets against the official Hub with no secrets set at all;
+// a self-hosted Hub still overrides it with HUB_ANON_KEY.
+const DEFAULT_HUB_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53ZmlwZmJkaGtzdWNxZHN5YWhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUyOTQ0NjAsImV4cCI6MjA4MDg3MDQ2MH0.AKx0l4RCWLYQgPRSevVtEvQ7mO-IN9Vd72PkWXevRE4'
+
+/** A Supabase anon key names its project in the `ref` claim. When HUB_URL is a
+ *  *.supabase.co host, the two must agree — if they do not, every Hub call
+ *  returns a bare 401 with nothing to explain it. Warn loudly rather than let
+ *  that be debugged from an empty log. A custom domain carries no ref, so it
+ *  is skipped rather than guessed at. */
+function warnOnHubMismatch(hubUrl: string, hubKey: string) {
+  const host = (() => { try { return new URL(hubUrl).hostname } catch { return '' } })()
+  if (!host.endsWith('.supabase.co')) return
+  const urlRef = host.split('.')[0]
+  let keyRef = ''
+  try { keyRef = JSON.parse(atob(hubKey.split('.')[1] || '')).ref || '' } catch { /* not a JWT */ }
+  if (keyRef && urlRef && keyRef !== urlRef) {
+    console.error(
+      `[authenticate-hub-user] HUB_URL points at project "${urlRef}" but the Hub key is for ` +
+      `"${keyRef}". Every Hub call will fail with 401. Fix HUB_URL or HUB_ANON_KEY.`,
+    )
+  }
+}
 
 // Map the Hub silo role -> Silo ERP roles for auto-provisioning the roster.
 function rolesForHubRole(hubRole: string): string[] {
@@ -40,8 +74,9 @@ Deno.serve(async (req: Request) => {
     const hubUrl = Deno.env.get('HUB_URL') || DEFAULT_HUB_URL
     const hubKey =
       Deno.env.get('HUB_PUBLISHABLE_KEY') ||
-      Deno.env.get('HUB_ANON_KEY')
-    if (!hubKey) throw new Error('Missing Hub anon/publishable key in Silo environment')
+      Deno.env.get('HUB_ANON_KEY') ||
+      DEFAULT_HUB_ANON_KEY
+    warnOnHubMismatch(hubUrl, hubKey)
 
     const hubClient = createClient(hubUrl, hubKey)
 
