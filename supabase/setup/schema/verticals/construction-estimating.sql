@@ -42,8 +42,15 @@
 -- ---------------------------------------------------------------------
 -- 1. THE PRICE BOOK
 -- What things cost. One row per material, trade, machine or subcontract
--- package, with the price the contractor actually pays and a note saying
+-- package, with the price the business actually pays and a note saying
 -- where that figure came from.
+--
+-- estimate_resources, rate_templates and rate_components are NOT specific
+-- to building work, and other verticals build on them. A rate is "what one
+-- unit of something costs, expressed as the resources it consumes" — for a
+-- contractor that unit is a cubic metre of concrete; for a garment factory
+-- it is one piece of a style. `domain` keeps each trade's price book to
+-- itself so a sewing factory is not scrolling past crushed stone.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.estimate_resources (
   id            uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -58,6 +65,7 @@ CREATE TABLE IF NOT EXISTS public.estimate_resources (
   priced_on     date DEFAULT CURRENT_DATE,
   is_active     boolean DEFAULT true,
   notes         text,
+  domain        text DEFAULT 'general',           -- construction | garment | general | ...
   created_at    timestamp with time zone DEFAULT now(),
   CONSTRAINT estimate_resources_pkey PRIMARY KEY (id),
   CONSTRAINT estimate_resources_type_check
@@ -65,8 +73,11 @@ CREATE TABLE IF NOT EXISTS public.estimate_resources (
   CONSTRAINT estimate_resources_cost_check CHECK (unit_cost >= 0)
 );
 
+ALTER TABLE public.estimate_resources ADD COLUMN IF NOT EXISTS domain text DEFAULT 'general';
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_estimate_resources_code
   ON public.estimate_resources (code) WHERE code IS NOT NULL AND code <> '';
+CREATE INDEX IF NOT EXISTS idx_estimate_resources_domain ON public.estimate_resources (domain);
 CREATE INDEX IF NOT EXISTS idx_estimate_resources_type ON public.estimate_resources (resource_type);
 
 -- Every price change is kept. A quote sent in March was priced on March's
@@ -151,12 +162,16 @@ CREATE TABLE IF NOT EXISTS public.rate_templates (
   trade       text,                           -- Concrete | Masonry | Finishes | MEP ...
   notes       text,
   is_active   boolean DEFAULT true,
+  domain      text DEFAULT 'general',
   created_at  timestamp with time zone DEFAULT now(),
   CONSTRAINT rate_templates_pkey PRIMARY KEY (id)
 );
 
+ALTER TABLE public.rate_templates ADD COLUMN IF NOT EXISTS domain text DEFAULT 'general';
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rate_templates_code
   ON public.rate_templates (code) WHERE code IS NOT NULL AND code <> '';
+CREATE INDEX IF NOT EXISTS idx_rate_templates_domain ON public.rate_templates (domain);
 
 CREATE TABLE IF NOT EXISTS public.rate_components (
   id                uuid DEFAULT gen_random_uuid() NOT NULL,
