@@ -1465,3 +1465,556 @@ END;
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.my_action_inbox() TO authenticated;
+
+-- =====================================================================
+-- 13. ROUTING THAT MATCHES HOW THE OFFICE ACTUALLY WORKS
+-- ---------------------------------------------------------------------
+-- A workflow was a straight line: step 1, then step 2, every time, one
+-- person per step. Real offices do not work that way, and the gap is not
+-- cosmetic — it is where the undocumented part of the process lives.
+--
+--  * "Anything over five hundred also goes to the director" was a rule
+--    staff carried in their heads. Somebody new does not have it, and
+--    nobody can audit it. A step may now carry a `when` clause tested
+--    against the request's own answers, so the rule is written down once
+--    and applied the same way every time.
+--
+--  * "Two of the three of them have to sign" could not be expressed, so
+--    offices faked it with two sequential steps that anybody could take in
+--    either order — which is not the same rule and does not record who
+--    was actually the second signature. A step may now carry a `quorum`,
+--    and each approval is a row naming who gave it.
+--
+--  * People who must SEE a file but not act on it had to be given an
+--    approval step, which then blocked the file until they clicked. A step
+--    may now carry `cc` roles: read access, no action, no hold-up.
+--
+-- All three are optional keys on a step. A workflow that uses none of them
+-- behaves exactly as before, which is why nothing has to be migrated.
+--
+--   {"id":"s2","name":"Director","order":2,"allowedRoles":["Director"],
+--    "when":{"field":"totalAmount","op":">","value":500},
+--    "quorum":2,
+--    "cc":["Accountant"]}
+-- =====================================================================
+
+-- Does this step apply to this request? A step with no `when` always does.
+-- An unknown operator is an ERROR and not a quiet "yes": a routing rule
+-- nobody can read is worse than no routing rule, because it looks applied.
+CREATE OR REPLACE FUNCTION public.step_applies(p_step jsonb, p_values jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_when  jsonb;
+  v_op    text;
+  v_raw   text;
+  v_cmp   jsonb;
+  v_lnum  numeric;
+  v_rnum  numeric;
+BEGIN
+  v_when := p_step -> 'when';
+  IF v_when IS NULL OR v_when = 'null'::jsonb THEN RETURN true; END IF;
+
+  v_op  := lower(coalesce(v_when->>'op', '='));
+  v_raw := coalesce(p_values, '{}'::jsonb) ->> (v_when->>'field');
+  v_cmp := v_when -> 'value';
+
+  IF v_op = 'empty'     THEN RETURN coalesce(v_raw, '') = ''; END IF;
+  IF v_op = 'not_empty' THEN RETURN coalesce(v_raw, '') <> ''; END IF;
+
+  -- An unanswered field satisfies no comparison. Treating a blank as zero
+  -- would route a form nobody finished as though somebody had.
+  IF v_raw IS NULL THEN RETURN false; END IF;
+
+  IF v_op IN ('=', '==', 'eq')  THEN RETURN v_raw =  coalesce(v_cmp #>> '{}', ''); END IF;
+  IF v_op IN ('!=', '<>', 'ne') THEN RETURN v_raw <> coalesce(v_cmp #>> '{}', ''); END IF;
+  IF v_op = 'contains'          THEN RETURN position(lower(coalesce(v_cmp #>> '{}', '')) in lower(v_raw)) > 0; END IF;
+  IF v_op = 'in' THEN
+    RETURN EXISTS (SELECT 1 FROM jsonb_array_elements_text(coalesce(v_cmp, '[]'::jsonb)) x WHERE x = v_raw);
+  END IF;
+
+  IF v_op IN ('>', '>=', '<', '<=') THEN
+    BEGIN
+      v_lnum := v_raw::numeric;
+      v_rnum := (v_cmp #>> '{}')::numeric;
+    EXCEPTION WHEN others THEN
+      RAISE EXCEPTION 'Step "%" compares % with % as numbers, but they are not numbers',
+        coalesce(p_step->>'name', '?'), v_when->>'field', coalesce(v_cmp #>> '{}', 'null');
+    END;
+    RETURN CASE v_op
+      WHEN '>'  THEN v_lnum >  v_rnum
+      WHEN '>=' THEN v_lnum >= v_rnum
+      WHEN '<'  THEN v_lnum <  v_rnum
+      ELSE           v_lnum <= v_rnum END;
+  END IF;
+
+  RAISE EXCEPTION 'Step "%" uses a routing operator this system does not know: %',
+    coalesce(p_step->>'name', '?'), v_op;
+END;
+$function$;
+
+-- The next step that actually applies, skipping the ones this request's
+-- own answers rule out. NULL means the chain is finished.
+CREATE OR REPLACE FUNCTION public.next_applicable_step(p_flow jsonb, p_after integer, p_values jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_s jsonb;
+BEGIN
+  FOR v_s IN
+    SELECT s FROM jsonb_array_elements(coalesce(p_flow, '[]'::jsonb)) s
+     WHERE coalesce((s->>'order')::int, 0) > coalesce(p_after, 0)
+     ORDER BY (s->>'order')::int
+  LOOP
+    IF step_applies(v_s, p_values) THEN RETURN v_s; END IF;
+  END LOOP;
+  RETURN NULL;
+END;
+$function$;
+
+-- Who has signed what, one row per person per step. A quorum step that
+-- only kept a counter could not answer "who was the second signature",
+-- which is the question that actually gets asked afterwards.
+CREATE TABLE IF NOT EXISTS public.document_step_approvals (
+  id          uuid DEFAULT gen_random_uuid() NOT NULL,
+  document_id uuid NOT NULL,
+  step_id     text NOT NULL,
+  employee_id uuid NOT NULL,
+  comment     text,
+  decided_at  timestamp with time zone DEFAULT now(),
+  CONSTRAINT document_step_approvals_pkey PRIMARY KEY (id),
+  CONSTRAINT document_step_approvals_document_fkey FOREIGN KEY (document_id) REFERENCES public.document_requests(id) ON DELETE CASCADE,
+  CONSTRAINT document_step_approvals_employee_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE,
+  CONSTRAINT uq_document_step_approvals UNIQUE (document_id, step_id, employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_step_approvals_doc ON public.document_step_approvals (document_id, step_id);
+
+ALTER TABLE public.document_step_approvals ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS document_step_approvals_read ON public.document_step_approvals;
+CREATE POLICY document_step_approvals_read ON public.document_step_approvals
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.document_requests d WHERE d.id = document_id));
+
+-- How many signatures a step still needs, and who has given theirs.
+DROP FUNCTION IF EXISTS public.document_step_progress(uuid);
+CREATE OR REPLACE FUNCTION public.document_step_progress(p_doc_id uuid)
+ RETURNS TABLE (out_step_id text, out_needed integer, out_given integer, out_signers text)
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_doc document_requests; v_flow jsonb; v_cur jsonb;
+BEGIN
+  SELECT * INTO v_doc FROM document_requests WHERE id = p_doc_id;
+  IF v_doc.id IS NULL OR v_doc.current_step_id IS NULL THEN RETURN; END IF;
+
+  SELECT coalesce(v_doc.workflow_snapshot, t.workflow, '[]'::jsonb) INTO v_flow
+    FROM document_templates t WHERE t.id = v_doc.template_id;
+  v_flow := coalesce(v_flow, v_doc.workflow_snapshot, '[]'::jsonb);
+
+  SELECT s INTO v_cur FROM jsonb_array_elements(v_flow) s WHERE s->>'id' = v_doc.current_step_id LIMIT 1;
+  IF v_cur IS NULL THEN RETURN; END IF;
+
+  RETURN QUERY
+  SELECT v_doc.current_step_id,
+         greatest(coalesce((v_cur->>'quorum')::int, 1), 1),
+         (SELECT count(*)::int FROM document_step_approvals a
+           WHERE a.document_id = p_doc_id AND a.step_id = v_doc.current_step_id),
+         (SELECT string_agg(e.name, ', ' ORDER BY a.decided_at)
+            FROM document_step_approvals a JOIN employees e ON e.id = a.employee_id
+           WHERE a.document_id = p_doc_id AND a.step_id = v_doc.current_step_id);
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.document_step_progress(uuid) TO authenticated;
+
+-- Roles copied in for information on any step of this request. They may
+-- read it; they are never asked to act and never hold it up.
+CREATE OR REPLACE FUNCTION public.document_cc_open_to_me(p_doc_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_emp uuid; v_doc document_requests; v_flow jsonb; v_roles text[];
+BEGIN
+  v_emp := current_employee_id();
+  IF v_emp IS NULL THEN RETURN false; END IF;
+
+  SELECT * INTO v_doc FROM document_requests WHERE id = p_doc_id;
+  IF v_doc.id IS NULL THEN RETURN false; END IF;
+
+  SELECT coalesce(v_doc.workflow_snapshot, t.workflow, '[]'::jsonb) INTO v_flow
+    FROM document_templates t WHERE t.id = v_doc.template_id;
+  v_flow := coalesce(v_flow, v_doc.workflow_snapshot, '[]'::jsonb);
+
+  v_roles := effective_roles(v_emp, CURRENT_DATE);
+  RETURN EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_flow) s,
+                  jsonb_array_elements_text(coalesce(s->'cc', '[]'::jsonb)) cc
+      JOIN unnest(v_roles) er ON lower(er) = lower(cc));
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.document_cc_open_to_me(uuid) TO authenticated;
+
+DROP POLICY IF EXISTS "View documents" ON public.document_requests;
+CREATE POLICY "View documents" ON public.document_requests
+  FOR SELECT TO authenticated
+  USING (
+    public.is_employee() AND (
+      coalesce(confidentiality, 'normal') = 'normal'
+      OR public.is_admin_or_founder()
+      OR requester_id      = public.current_employee_id()
+      OR action_officer_id = public.current_employee_id()
+      OR public.document_step_open_to_me(id)
+      OR public.document_cc_open_to_me(id)
+    )
+  );
+
+-- ---------------------------------------------------------------------
+-- The engine again, now honouring `when`, `quorum` and `cc`.
+-- Everything the previous version enforced still holds; a workflow using
+-- none of the three keys takes exactly the same path it did before.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.process_document(p_doc_id uuid, p_action text, p_comment text DEFAULT '')
+ RETURNS public.document_requests
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp      employees;
+  v_doc      document_requests;
+  v_tpl      document_templates;
+  v_flow     jsonb;
+  v_cur      jsonb;
+  v_next     jsonb;
+  v_allowed  text[];
+  v_roles    text[];
+  v_priv     boolean;
+  v_status   text;
+  v_next_id  text;
+  v_next_ord integer;
+  v_close    timestamp with time zone;
+  v_quorum   integer;
+  v_given    integer;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST
+    LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  v_priv  := EXISTS (SELECT 1 FROM unnest(v_emp.roles) r WHERE lower(r) IN ('admin', 'founder'));
+  v_roles := effective_roles(v_emp.id, CURRENT_DATE);
+
+  SELECT * INTO v_doc FROM document_requests WHERE id = p_doc_id FOR UPDATE;
+  IF v_doc.id IS NULL THEN RAISE EXCEPTION 'Document not found'; END IF;
+  IF v_doc.status = 'void' THEN RAISE EXCEPTION 'This document is void'; END IF;
+
+  SELECT * INTO v_tpl FROM document_templates WHERE id = v_doc.template_id;
+  v_flow := coalesce(v_doc.workflow_snapshot, v_tpl.workflow, '[]'::jsonb);
+
+  IF v_doc.current_step_id IS NOT NULL THEN
+    SELECT s INTO v_cur FROM jsonb_array_elements(v_flow) s
+      WHERE s->>'id' = v_doc.current_step_id LIMIT 1;
+  END IF;
+
+  IF p_action IN ('approve', 'reject', 'return') THEN
+    IF v_doc.status <> 'pending' THEN RAISE EXCEPTION 'Document is not awaiting approval'; END IF;
+    IF v_cur IS NULL THEN
+      IF NOT v_priv THEN RAISE EXCEPTION 'No current step to act on'; END IF;
+    ELSE
+      IF v_doc.requester_id = v_emp.id THEN RAISE EXCEPTION 'You cannot action your own request'; END IF;
+      v_allowed := ARRAY(SELECT jsonb_array_elements_text(coalesce(v_cur->'allowedRoles', '[]'::jsonb)));
+      IF NOT v_priv AND NOT EXISTS (
+        SELECT 1 FROM unnest(v_roles) er JOIN unnest(v_allowed) ar ON lower(er) = lower(ar)
+      ) THEN
+        RAISE EXCEPTION 'Your role is not authorized to approve this step';
+      END IF;
+    END IF;
+  ELSIF p_action = 'resubmit' THEN
+    IF v_doc.requester_id <> v_emp.id AND NOT v_priv THEN RAISE EXCEPTION 'Only the requester may resubmit'; END IF;
+    IF v_doc.status NOT IN ('returned', 'rejected') THEN RAISE EXCEPTION 'Only returned or rejected requests can be resubmitted'; END IF;
+  ELSE
+    RAISE EXCEPTION 'Unknown action: %', p_action;
+  END IF;
+
+  IF p_action = 'approve' THEN
+    v_quorum := greatest(coalesce((v_cur->>'quorum')::int, 1), 1);
+
+    IF v_quorum > 1 THEN
+      -- One signature per person. Trying twice is refused rather than
+      -- counted twice, which would let one approver clear a quorum alone.
+      INSERT INTO document_step_approvals (document_id, step_id, employee_id, comment)
+      VALUES (p_doc_id, v_doc.current_step_id, v_emp.id, nullif(p_comment, ''))
+      ON CONFLICT (document_id, step_id, employee_id) DO NOTHING;
+      IF NOT FOUND THEN RAISE EXCEPTION 'You have already approved this step'; END IF;
+
+      SELECT count(*) INTO v_given FROM document_step_approvals
+       WHERE document_id = p_doc_id AND step_id = v_doc.current_step_id;
+
+      IF v_given < v_quorum THEN
+        -- Still short. Record the signature and leave the file where it is.
+        UPDATE document_requests SET
+          updated_at = now(),
+          history = coalesce(history, '[]'::jsonb) || jsonb_build_object(
+            'id', 'hist_' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+            'action', 'approved',
+            'actorId', v_emp.id, 'actorName', v_emp.name,
+            'stepName', coalesce(v_cur->>'name', ''),
+            'timestamp', to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'comment', coalesce(nullif(p_comment, ''), '') ||
+                       ' (' || v_given || '/' || v_quorum || ')')
+        WHERE id = p_doc_id
+        RETURNING * INTO v_doc;
+        RETURN v_doc;
+      END IF;
+    END IF;
+
+    v_next := next_applicable_step(v_flow, coalesce(v_doc.current_step_order, 0), v_doc.field_values);
+    IF v_next IS NULL THEN
+      v_status := 'approved'; v_next_id := NULL; v_next_ord := 0; v_close := now();
+    ELSE
+      v_status := 'pending'; v_next_id := v_next->>'id'; v_next_ord := (v_next->>'order')::int;
+    END IF;
+  ELSIF p_action = 'reject' THEN
+    v_status := 'rejected'; v_next_id := NULL; v_next_ord := v_doc.current_step_order; v_close := now();
+    DELETE FROM document_step_approvals WHERE document_id = p_doc_id;
+  ELSIF p_action = 'return' THEN
+    v_status := 'returned'; v_next_id := v_doc.current_step_id; v_next_ord := v_doc.current_step_order;
+    -- Partial signatures on a step do not survive the file going back: the
+    -- people who signed did so against a version that is being changed.
+    DELETE FROM document_step_approvals WHERE document_id = p_doc_id AND step_id = v_doc.current_step_id;
+  ELSE -- resubmit
+    DELETE FROM document_step_approvals WHERE document_id = p_doc_id;
+    v_next := next_applicable_step(v_flow, 0, v_doc.field_values);
+    IF v_next IS NULL THEN
+      v_status := 'approved'; v_next_id := NULL; v_next_ord := 0; v_close := now();
+    ELSE
+      v_status := 'pending'; v_next_id := v_next->>'id'; v_next_ord := coalesce((v_next->>'order')::int, 0);
+    END IF;
+  END IF;
+
+  UPDATE document_requests SET
+    status = v_status,
+    current_step_id = v_next_id,
+    current_step_order = v_next_ord,
+    closed_at = CASE WHEN p_action = 'resubmit' THEN NULL ELSE coalesce(v_close, closed_at) END,
+    updated_at = now(),
+    history = coalesce(history, '[]'::jsonb) || jsonb_build_object(
+      'id', 'hist_' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+      'action', p_action,
+      'actorId', v_emp.id,
+      'actorName', v_emp.name,
+      'stepName', coalesce(v_cur->>'name', ''),
+      'timestamp', to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'comment', coalesce(p_comment, '')
+    )
+  WHERE id = p_doc_id
+  RETURNING * INTO v_doc;
+
+  RETURN v_doc;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.process_document(uuid, text, text) TO authenticated;
+
+-- register_document() must start on the first step that APPLIES, or a
+-- conditional first step would put every request on a step half of them
+-- have no business being on.
+CREATE OR REPLACE FUNCTION public.register_document(
+  p_direction          text,
+  p_title              text,
+  p_template_id        uuid DEFAULT NULL,
+  p_content            text DEFAULT NULL,
+  p_correspondent_name text DEFAULT NULL,
+  p_correspondent_org  text DEFAULT NULL,
+  p_their_ref          text DEFAULT NULL,
+  p_document_date      date DEFAULT NULL,
+  p_received_at        date DEFAULT NULL,
+  p_action_officer     uuid DEFAULT NULL,
+  p_due_date           date DEFAULT NULL,
+  p_confidentiality    text DEFAULT 'normal',
+  p_series_code        text DEFAULT NULL,
+  p_field_values       jsonb DEFAULT '{}'::jsonb
+)
+ RETURNS public.document_requests
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_emp    employees;
+  v_tpl    document_templates;
+  v_series text;
+  v_ref    text;
+  v_first  jsonb;
+  v_due    date;
+  v_doc    document_requests;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST
+    LIMIT 1;
+  IF v_emp.id IS NULL THEN RAISE EXCEPTION 'Not an employee of this workspace'; END IF;
+
+  IF p_direction NOT IN ('incoming', 'outgoing', 'internal') THEN
+    RAISE EXCEPTION 'Direction must be incoming, outgoing or internal';
+  END IF;
+  IF coalesce(trim(p_title), '') = '' THEN
+    RAISE EXCEPTION 'A document needs a subject before it can be registered';
+  END IF;
+
+  IF p_template_id IS NOT NULL THEN
+    SELECT * INTO v_tpl FROM document_templates WHERE id = p_template_id;
+    IF v_tpl.id IS NULL THEN RAISE EXCEPTION 'Template not found'; END IF;
+    IF coalesce(v_tpl.is_active, true) = false THEN
+      RAISE EXCEPTION 'Template "%" is retired and cannot be used for new requests', v_tpl.name;
+    END IF;
+  END IF;
+
+  v_series := coalesce(p_series_code, v_tpl.series_code,
+                       CASE p_direction WHEN 'incoming' THEN 'IN'
+                                        WHEN 'outgoing' THEN 'OUT'
+                                        ELSE 'INT' END);
+  v_ref := allocate_document_number(v_series, coalesce(p_received_at, p_document_date, CURRENT_DATE));
+
+  v_first := next_applicable_step(coalesce(v_tpl.workflow, '[]'::jsonb), 0, coalesce(p_field_values, '{}'::jsonb));
+
+  v_due := coalesce(p_due_date,
+                    CASE WHEN v_tpl.default_due_days IS NOT NULL
+                         THEN coalesce(p_received_at, CURRENT_DATE) + v_tpl.default_due_days
+                    END);
+
+  INSERT INTO document_requests (
+    template_id, requester_id, title, content, status,
+    current_step_id, current_step_order,
+    reference, series_code, direction,
+    correspondent_name, correspondent_org, their_ref,
+    document_date, received_at, action_officer_id, due_date,
+    confidentiality, field_values, template_version, workflow_snapshot,
+    history
+  ) VALUES (
+    p_template_id, v_emp.id, p_title, coalesce(p_content, v_tpl.content), 'pending',
+    v_first->>'id', coalesce((v_first->>'order')::int, 0),
+    v_ref, v_series, p_direction,
+    p_correspondent_name, p_correspondent_org, p_their_ref,
+    p_document_date, coalesce(p_received_at, CASE WHEN p_direction = 'incoming' THEN CURRENT_DATE END),
+    p_action_officer, v_due,
+    coalesce(p_confidentiality, 'normal'), coalesce(p_field_values, '{}'::jsonb),
+    v_tpl.version, coalesce(v_tpl.workflow, '[]'::jsonb),
+    jsonb_build_array(jsonb_build_object(
+      'id', 'hist_' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+      'action', 'created',
+      'actorId', v_emp.id,
+      'actorName', v_emp.name,
+      'timestamp', to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'comment', 'Registered as ' || v_ref
+    ))
+  )
+  RETURNING * INTO v_doc;
+
+  RETURN v_doc;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.register_document(text, text, uuid, text, text, text, text, date, date, uuid, date, text, text, jsonb) TO authenticated;
+
+-- The inbox must not keep showing a quorum step to somebody who has
+-- already signed it — their part is done, and a queue that will not clear
+-- is a queue people stop trusting.
+DROP FUNCTION IF EXISTS public.my_action_inbox();
+CREATE OR REPLACE FUNCTION public.my_action_inbox()
+ RETURNS TABLE (
+   out_kind      text,
+   out_id        uuid,
+   out_reference text,
+   out_title     text,
+   out_step      text,
+   out_since     timestamp with time zone,
+   out_due_date  date,
+   out_overdue   boolean
+ )
+ LANGUAGE plpgsql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_emp employees; v_roles text[]; v_priv boolean;
+BEGIN
+  SELECT * INTO v_emp FROM employees
+    WHERE user_id = auth.uid() OR email = (auth.jwt() ->> 'email')
+    ORDER BY (user_id = auth.uid()) DESC NULLS LAST LIMIT 1;
+  IF v_emp.id IS NULL THEN RETURN; END IF;
+
+  v_priv  := EXISTS (SELECT 1 FROM unnest(v_emp.roles) r WHERE lower(r) IN ('admin', 'founder'));
+  v_roles := effective_roles(v_emp.id, CURRENT_DATE);
+
+  RETURN QUERY
+  SELECT 'document'::text, d.id, d.reference, d.title,
+         (SELECT s->>'name' FROM jsonb_array_elements(
+            coalesce(d.workflow_snapshot, t.workflow, '[]'::jsonb)) s
+           WHERE s->>'id' = d.current_step_id LIMIT 1),
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+    LEFT JOIN document_templates t ON t.id = d.template_id
+   WHERE d.status = 'pending'
+     AND d.current_step_id IS NOT NULL
+     AND d.requester_id IS DISTINCT FROM v_emp.id
+     AND NOT EXISTS (SELECT 1 FROM document_step_approvals a
+                      WHERE a.document_id = d.id AND a.step_id = d.current_step_id
+                        AND a.employee_id = v_emp.id)
+     AND EXISTS (
+       SELECT 1 FROM jsonb_array_elements(coalesce(d.workflow_snapshot, t.workflow, '[]'::jsonb)) s
+        WHERE s->>'id' = d.current_step_id
+          AND (v_priv OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(coalesce(s->'allowedRoles', '[]'::jsonb)) ar
+              JOIN unnest(v_roles) er ON lower(er) = lower(ar))))
+
+  UNION ALL
+  SELECT 'document'::text, d.id, d.reference, d.title, NULL,
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+   WHERE d.status = 'returned' AND d.requester_id = v_emp.id
+
+  UNION ALL
+  SELECT 'document'::text, d.id, d.reference, d.title, NULL,
+         d.updated_at, d.due_date,
+         (d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE)
+    FROM document_requests d
+   WHERE d.action_officer_id = v_emp.id
+     AND d.closed_at IS NULL
+     AND d.status NOT IN ('void', 'rejected')
+     AND d.current_step_id IS NULL
+
+  UNION ALL
+  SELECT 'form'::text, fs.id, fs.reference, fs.title,
+         fd.workflow -> fs.current_step ->> 'name',
+         fs.updated_at, NULL::date, false
+    FROM form_submissions fs
+    JOIN form_defs fd ON fd.id = fs.form_id
+   WHERE fs.status IN ('submitted', 'in_review')
+     AND fs.submitted_by IS DISTINCT FROM v_emp.id
+     AND (fd.workflow -> fs.current_step ->> 'type') = 'approval'
+     AND (v_priv
+          OR jsonb_array_length(coalesce(fd.workflow -> fs.current_step -> 'allowedRoles', '[]'::jsonb)) = 0
+          OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(
+                          coalesce(fd.workflow -> fs.current_step -> 'allowedRoles', '[]'::jsonb)) ar
+              JOIN unnest(v_roles) er ON lower(er) = lower(ar)))
+
+  ORDER BY 8 DESC, 7 ASC NULLS LAST, 6 ASC;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.my_action_inbox() TO authenticated;

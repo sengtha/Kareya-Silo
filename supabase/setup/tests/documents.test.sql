@@ -38,19 +38,34 @@ BEGIN
   RAISE EXCEPTION 'FAIL: % — it was ALLOWED', label;
 END $$;
 
--- Act as a given employee for the RPCs, which read auth.jwt().
+-- Act as a given employee. Both claims are set, not just the email: the
+-- RPCs identify the caller by user_id OR email, but the RLS helper
+-- current_employee_id() matches on user_id alone, so a test that only set
+-- the email would exercise the functions and quietly skip the policies.
 CREATE OR REPLACE FUNCTION act_as(p_email text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_uid uuid;
 BEGIN
+  SELECT user_id INTO v_uid FROM employees WHERE email = p_email;
   PERFORM set_config('request.jwt.claims', json_build_object('email', p_email)::text, false);
+  PERFORM set_config('request.jwt.claim.sub', coalesce(v_uid::text, ''), false);
 END $$;
 
 -- ---------------------------------------------------------------- setup
-INSERT INTO employees (id, name, email, roles) VALUES
-  ('d0000000-0000-0000-0000-00000000000a', 'Chanthou (clerk)',    'clerk@office.kh',   ARRAY['Reception']),
-  ('d0000000-0000-0000-0000-00000000000b', 'Sopheak (manager)',   'manager@office.kh', ARRAY['Manager']),
-  ('d0000000-0000-0000-0000-00000000000c', 'Rithy (director)',    'director@office.kh',ARRAY['Director']),
-  ('d0000000-0000-0000-0000-00000000000d', 'Sokha (admin)',       'admin@office.kh',   ARRAY['Admin']),
-  ('d0000000-0000-0000-0000-00000000000e', 'Vanna (deputy)',      'deputy@office.kh',  ARRAY['Reception'])
+INSERT INTO auth.users (id, email) VALUES
+  ('e0000000-0000-0000-0000-00000000000a', 'clerk@office.kh'),
+  ('e0000000-0000-0000-0000-00000000000b', 'manager@office.kh'),
+  ('e0000000-0000-0000-0000-00000000000c', 'director@office.kh'),
+  ('e0000000-0000-0000-0000-00000000000d', 'admin@office.kh'),
+  ('e0000000-0000-0000-0000-00000000000e', 'deputy@office.kh'),
+  ('e0000000-0000-0000-0000-00000000000f', 'acct@office.kh')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO employees (id, user_id, name, email, roles) VALUES
+  ('d0000000-0000-0000-0000-00000000000a', 'e0000000-0000-0000-0000-00000000000a', 'Chanthou (clerk)',  'clerk@office.kh',   ARRAY['Reception']),
+  ('d0000000-0000-0000-0000-00000000000b', 'e0000000-0000-0000-0000-00000000000b', 'Sopheak (manager)', 'manager@office.kh', ARRAY['Manager']),
+  ('d0000000-0000-0000-0000-00000000000c', 'e0000000-0000-0000-0000-00000000000c', 'Rithy (director)',  'director@office.kh',ARRAY['Director']),
+  ('d0000000-0000-0000-0000-00000000000d', 'e0000000-0000-0000-0000-00000000000d', 'Sokha (admin)',     'admin@office.kh',   ARRAY['Admin']),
+  ('d0000000-0000-0000-0000-00000000000e', 'e0000000-0000-0000-0000-00000000000e', 'Vanna (deputy)',    'deputy@office.kh',  ARRAY['Reception'])
 ON CONFLICT DO NOTHING;
 
 \echo '== 1. numbering series'
@@ -566,6 +581,118 @@ SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Reply o
 SELECT act_as('nobody@elsewhere.kh');
 SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox()),
           'somebody who is not an employee has an empty inbox, not an error');
+
+\echo '== 13. routing: conditions, quorum and copies for information'
+
+-- The rule staff used to carry in their heads: anything over five hundred
+-- also goes to the director.
+INSERT INTO document_templates (id, name, content, workflow, fields)
+VALUES ('d1000000-0000-0000-0000-000000000003', 'Expense claim', '<p>claim</p>',
+        '[{"id":"e1","name":"Accountant check","type":"approval","order":1,"allowedRoles":["Accountant"],"cc":["Reception"]},
+          {"id":"e2","name":"Director sign-off","type":"approval","order":2,"allowedRoles":["Director"],
+           "when":{"field":"totalAmount","op":">","value":500}}]'::jsonb,
+        '[{"key":"totalAmount","label":"Total","type":"number","required":true}]'::jsonb);
+
+INSERT INTO employees (id, user_id, name, email, roles)
+VALUES ('d0000000-0000-0000-0000-00000000000f', 'e0000000-0000-0000-0000-00000000000f',
+        'Mony (accountant)', 'acct@office.kh', ARRAY['Accountant'])
+ON CONFLICT DO NOTHING;
+
+SELECT ok(step_applies('{"name":"x"}'::jsonb, '{}'::jsonb),
+          'a step with no condition always applies');
+SELECT ok(step_applies('{"when":{"field":"a","op":">","value":500}}'::jsonb, '{"a":"600"}'::jsonb),
+          '600 is over the 500 threshold');
+SELECT ok(NOT step_applies('{"when":{"field":"a","op":">","value":500}}'::jsonb, '{"a":"400"}'::jsonb),
+          '400 is not');
+SELECT ok(NOT step_applies('{"when":{"field":"a","op":">","value":500}}'::jsonb, '{}'::jsonb),
+          'an unanswered field satisfies nothing — a blank is not a zero');
+SELECT ok(step_applies('{"when":{"field":"k","op":"in","value":["a","b"]}}'::jsonb, '{"k":"b"}'::jsonb),
+          'an "in" list matches one of its values');
+SELECT ok(step_applies('{"when":{"field":"k","op":"not_empty"}}'::jsonb, '{"k":"x"}'::jsonb),
+          'not_empty sees an answer');
+SELECT raises($$SELECT step_applies('{"name":"Bad","when":{"field":"a","op":"roughly","value":1}}'::jsonb, '{"a":"1"}'::jsonb)$$,
+              'an operator this system does not know is an error, not a silent yes');
+SELECT raises($$SELECT step_applies('{"name":"Bad","when":{"field":"a","op":">","value":500}}'::jsonb, '{"a":"lots"}'::jsonb)$$,
+              'comparing text as a number is an error, not a silent no');
+
+SELECT act_as('clerk@office.kh');
+SELECT ok((register_document('internal', 'Small claim',
+             p_template_id  => 'd1000000-0000-0000-0000-000000000003',
+             p_field_values => '{"totalAmount":"120"}'::jsonb)).current_step_id = 'e1',
+          'a small claim starts at the accountant');
+SELECT ok((register_document('internal', 'Large claim',
+             p_template_id  => 'd1000000-0000-0000-0000-000000000003',
+             p_field_values => '{"totalAmount":"900"}'::jsonb)).current_step_id = 'e1',
+          'so does a large one');
+
+SELECT act_as('admin@office.kh');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Small claim'), 'approve')).status = 'approved',
+          'the small claim finishes at the accountant — the director step does not apply to it');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Large claim'), 'approve')).current_step_id = 'e2',
+          'the large one goes on to the director, without anybody remembering to send it');
+
+SELECT act_as('director@office.kh');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Large claim'), 'approve')).status = 'approved',
+          'and the director closes it');
+
+-- Two of them have to sign.
+INSERT INTO document_templates (id, name, content, workflow)
+VALUES ('d1000000-0000-0000-0000-000000000004', 'Board resolution', '<p>resolution</p>',
+        '[{"id":"b1","name":"Two signatures","type":"approval","order":1,
+           "allowedRoles":["Manager","Director","Accountant"],"quorum":2}]'::jsonb);
+
+SELECT act_as('clerk@office.kh');
+SELECT (register_document('internal', 'Resolution 1',
+          p_template_id => 'd1000000-0000-0000-0000-000000000004')).id;
+
+SELECT act_as('manager@office.kh');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Resolution 1'),
+                            'approve', 'Agreed')).status = 'pending',
+          'one signature of two does not clear the step');
+SELECT ok((SELECT out_given FROM document_step_progress(
+             (SELECT id FROM document_requests WHERE title = 'Resolution 1'))) = 1,
+          'and the progress says one of two');
+SELECT ok((SELECT out_signers FROM document_step_progress(
+             (SELECT id FROM document_requests WHERE title = 'Resolution 1'))) = 'Sopheak (manager)',
+          'naming who actually signed, not just how many');
+SELECT raises($$SELECT process_document(
+    (SELECT id FROM document_requests WHERE title = 'Resolution 1'), 'approve')$$,
+              'the same person cannot sign twice to make up the number');
+
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Resolution 1'),
+          'and it leaves the inbox of somebody who has already signed');
+SELECT act_as('director@office.kh');
+SELECT ok(EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Resolution 1'),
+          'while still waiting on everybody who has not');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Resolution 1'),
+                            'approve')).status = 'approved',
+          'the second signature clears the step and the resolution passes');
+
+-- A returned file loses its partial signatures: they were given against a
+-- version that is about to change.
+SELECT act_as('clerk@office.kh');
+SELECT (register_document('internal', 'Resolution 2',
+          p_template_id => 'd1000000-0000-0000-0000-000000000004')).id;
+SELECT act_as('manager@office.kh');
+SELECT process_document((SELECT id FROM document_requests WHERE title = 'Resolution 2'), 'approve');
+SELECT process_document((SELECT id FROM document_requests WHERE title = 'Resolution 2'), 'return', 'Wrong figures');
+SELECT ok((SELECT out_given FROM document_step_progress(
+             (SELECT id FROM document_requests WHERE title = 'Resolution 2'))) = 0,
+          'returning the file clears the signatures already on that step');
+SELECT act_as('clerk@office.kh');
+SELECT ok((process_document((SELECT id FROM document_requests WHERE title = 'Resolution 2'),
+                            'resubmit')).current_step_id = 'b1',
+          'and a resubmitted file starts the step over rather than arriving pre-signed');
+
+-- Copied in for information: may read, never asked to act.
+SELECT act_as('clerk@office.kh');
+SELECT ok(document_cc_open_to_me((SELECT id FROM document_requests WHERE title = 'Large claim')),
+          'a Reception role copied in on a step can read the file');
+SELECT ok(NOT EXISTS (SELECT 1 FROM my_action_inbox() WHERE out_title = 'Large claim'),
+          'and is never asked to action it');
+SELECT act_as('director@office.kh');
+SELECT ok(NOT document_cc_open_to_me((SELECT id FROM document_requests WHERE title = 'Resolution 1')),
+          'a workflow that copies nobody in opens nothing');
 
 \echo ''
 \echo 'ALL DOCUMENT REGISTER ASSERTIONS PASSED'
