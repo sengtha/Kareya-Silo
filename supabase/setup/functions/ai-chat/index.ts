@@ -74,10 +74,19 @@ Deno.serve(async (req: Request) => {
       'Be concise and accurate. If a tool returns no data, say so plainly. ' +
       'Only reference information the tools return — never invent figures.'
 
+    // Appended to whatever prompt the owner wrote, because it describes how the
+    // tools behave rather than how the assistant should sound. An owner editing
+    // the tone must not be able to delete it by accident.
+    const writeRule = cfg.tools_write_enabled
+      ? ' Any action that changes something is PROPOSED, not performed: it goes into an approval queue. '
+        + 'When a tool replies with state "pending", say it is waiting for approval. Only say it is done '
+        + 'when the reply says "applied". Never describe a pending action as completed.'
+      : ''
+
     const result = await runProvider(cfg.chat_provider, {
       apiKey: String(chatKey),
       model: cfg.chat_model,
-      system,
+      system: system + writeRule,
       messages,
       tools,
       temperature: Number(cfg.temperature ?? 0.4),

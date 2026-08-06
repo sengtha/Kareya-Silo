@@ -2,12 +2,15 @@
 // caller's RLS-scoped Supabase client (userClient) or the RAG search RPC, so
 // the assistant can never read data the user couldn't read themselves.
 //
-// Read tools query tables directly (RLS filters the rows). Write tools MUST be
-// routed through an existing SECURITY DEFINER RPC that re-enforces the same
-// authorization the UI relies on — never a raw table mutation. process_document
-// below is the reference: the RPC itself checks the caller is an employee, is
-// not actioning their own request, and holds a role allowed at the current
-// workflow step, so the assistant can approve nothing the user couldn't.
+// Read tools query tables directly (RLS filters the rows).
+//
+// Write tools do not write. They call ai_queue_action(), which records the
+// proposal and leaves it for a person. When it is approved the database
+// replays it through the same SECURITY DEFINER RPC the screens call, under
+// the approver's own JWT — so process_document()'s checks (an employee, not
+// their own request, holding a role allowed at the current step) apply to
+// whoever approved it. The assistant can cause nothing that person could not
+// do by hand. See schema/verticals/ai-actions.sql.
 
 export interface ToolCtx {
   userClient: any
@@ -136,33 +139,62 @@ export function buildTools(ctx: ToolCtx): ToolDef[] {
     },
   })
 
-  // Write tools are opt-in per silo (ai_config.tools_write_enabled). The RPC
-  // still enforces authorization; this flag is a second, owner-controlled gate.
+  // ─── Write actions are PROPOSED, not performed ───────────────────────────
+  //
+  // A write tool does not do the thing. It calls ai_queue_action(), which
+  // records the proposal and hands back what happened to it. The assistant is
+  // never blocked waiting for a person: it can carry on and queue more, and
+  // the person decides later — all at once, or one at a time.
+  //
+  // The database decides whether anything actually runs. If a standing rule
+  // covers this kind of act AND nothing ahead of it is waiting for a person,
+  // it applies at once and comes back 'applied'. Otherwise it comes back
+  // 'pending' and nothing has happened yet.
+  //
+  // Still opt-in per silo (ai_config.tools_write_enabled): with writes off the
+  // assistant has no write tools at all, so there is nothing to queue.
   if (ctx.writeEnabled) tools.push({
     name: 'process_document_request',
     description:
-      "Advance a document request through its approval workflow. action must be one of: approve, reject, return, resubmit. This performs a REAL state change. The workflow rules are enforced server-side — you may only act on a request the user is authorized to action (the user cannot approve their own request, and must hold a role allowed at the current step); if not, this returns an error. Always call list_document_requests first to obtain the id and confirm the request is still pending. Only call this when the user has clearly asked to approve/reject/return/resubmit a specific document.",
+      "Propose advancing a document request through its approval workflow. action must be one of: approve, reject, return, resubmit. " +
+      "This does NOT perform the change: it adds it to the user's approval queue, and a person decides afterwards. " +
+      "The reply tells you which happened — state 'pending' means it is waiting for somebody, state 'applied' means a standing rule covered it and it is done. " +
+      "Say plainly which of those it was; never tell the user something is done when the reply said pending. " +
+      "Always call list_document_requests first to obtain the id and confirm the request is still awaiting approval. " +
+      "Only call this when the user has clearly asked to approve/reject/return/resubmit a specific document.",
     parameters: {
       type: 'object',
       properties: {
         document_id: { type: 'string', description: 'The document request id (UUID) from list_document_requests.' },
-        action: { type: 'string', enum: ['approve', 'reject', 'return', 'resubmit'], description: 'The workflow transition to apply.' },
+        action: { type: 'string', enum: ['approve', 'reject', 'return', 'resubmit'], description: 'The workflow transition to propose.' },
         comment: { type: 'string', description: 'Optional note recorded in the approval history.' },
       },
       required: ['document_id', 'action'],
     },
-    run: async ({ document_id, action, comment }: { document_id: string; action: string; comment?: string }) => {
-      // Routed through the SECURITY DEFINER RPC under the caller's JWT, so the
-      // same role/ownership checks the UI relies on apply here unchanged.
-      const { data, error } = await ctx.userClient.rpc('process_document', {
-        p_doc_id: document_id,
-        p_action: action,
-        p_comment: comment || '',
-      })
-      if (error) return { error: error.message }
-      return { ok: true, id: data?.id, title: data?.title, status: data?.status, current_step_order: data?.current_step_order }
-    },
+    run: async ({ document_id, action, comment }: { document_id: string; action: string; comment?: string }) =>
+      queue(ctx, 'process_document_request', {
+        document_id, action, comment: comment || '',
+      }),
   })
 
   return tools
+}
+
+// Every write tool goes through here. Nothing in this file calls a mutating RPC
+// directly any more — the queue is the only route, and ai_queue_action() runs
+// under the caller's JWT like everything else.
+async function queue(ctx: ToolCtx, tool: string, args: Record<string, unknown>) {
+  const { data, error } = await ctx.userClient
+    .rpc('ai_queue_action', { p_tool: tool, p_args: args })
+    .maybeSingle()
+  // The database's own sentence — it names the document that could not be
+  // found, or the action that is not part of the workflow.
+  if (error) return { error: error.message.replace(/^refused:\s*/, '') }
+  if (!data) return { error: 'no response' }
+  return {
+    action_id: data.out_id,
+    state: data.out_state,      // pending | applied
+    title: data.out_title,
+    message: data.out_message,
+  }
 }
