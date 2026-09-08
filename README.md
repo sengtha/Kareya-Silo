@@ -101,6 +101,21 @@ one file errors on a missing table or column, **just run the whole folder
 again**: the second pass always completes, because by then everything it needs
 exists. Verified in both alphabetical and reverse-alphabetical order.
 
+### 2a. "Potential issues detected" → **Run without RLS**
+
+The SQL editor scans your text for tables missing a policy, but it does not
+skip comments or strings. Prose like "turned **into an** invoice" in
+`verticals/metrics.sql` is read as a table named `an`, so **Run and enable
+RLS** fails with `ERROR: 42P01: relation "an" does not exist` — about SQL the
+editor generated, not yours. 24 install files carry prose like this. The tell
+is a relation named after an English article, and no `LINE nnn:`.
+
+Always **Run without RLS**: every file already enables RLS and writes its own
+policies at the end. `psql` and the CLI skip the dialog entirely.
+
+Also: if any text is selected, Run silently becomes **Run selected**. A
+fragment of these files is not valid alone — clear the selection first.
+
 ### 2b. (Optional) Load demo data
 `supabase/setup/demo/demo-seed.sql` fills the workspace with staff, clients,
 vendors, stock and a starter catalog for every vertical, so no screen opens

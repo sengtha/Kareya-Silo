@@ -53,6 +53,14 @@
 -- Fully idempotent: safe to re-run.
 -- =====================================================================
 
+-- pgcrypto supplies crypt/gen_salt/digest/gen_random_bytes. On Supabase it
+-- is ALREADY installed in the `extensions` schema, so the IF NOT EXISTS
+-- below is a no-op there and does NOT put it in public. Every function that
+-- touches it therefore carries `search_path TO 'public', 'extensions'` —
+-- without that the SET pins the function to public and digest()/crypt()
+-- resolve to nothing. A schema in search_path that does not exist is
+-- ignored, so the same line is also correct on a plain Postgres where the
+-- CREATE EXTENSION below does land pgcrypto in public.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------------------------------------------------------------------
@@ -143,7 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_form_submissions_client_pass
 -- ---------------------------------------------------------------------
 -- No 0/O, no 1/I/L. Somebody is going to read this down a telephone.
 CREATE OR REPLACE FUNCTION public.new_client_code(p_len integer DEFAULT 10)
-RETURNS text LANGUAGE plpgsql AS $function$
+RETURNS text LANGUAGE plpgsql SET search_path TO 'public', 'extensions' AS $function$
 DECLARE
   alphabet constant text := '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
   v_bytes  bytea;
@@ -173,7 +181,7 @@ CREATE OR REPLACE FUNCTION public.issue_client_pass(
   p_client_id  uuid DEFAULT NULL
 )
 RETURNS TABLE(out_id uuid, out_code text, out_prefix text)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'extensions'
 AS $function$
 DECLARE
   v_emp    employees;
@@ -245,7 +253,7 @@ RETURNS TABLE(
   out_ok boolean, out_message text, out_token text,
   out_form_id uuid, out_form_name text, out_client_name text
 )
-LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'extensions'
 AS $function$
 DECLARE
   v_code   text;
@@ -320,7 +328,7 @@ GRANT EXECUTE ON FUNCTION public.open_client_session(text) TO anon, authenticate
 -- Resolve a token to its pass. Internal: never granted to anon, so a
 -- caller cannot use it to test tokens.
 CREATE OR REPLACE FUNCTION public.client_session_pass(p_token text)
-RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'extensions'
 AS $function$
   SELECT s.pass_id FROM client_sessions s
    WHERE s.token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex')
