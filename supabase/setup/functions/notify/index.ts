@@ -69,9 +69,23 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false },
       global: { headers: { Authorization: authHeader } },
     })
-    const { data: me } = await userClient.auth.getUser()
-    if (!me?.user) return json({ error: 'Not authenticated' }, 401)
-    const callerUserId = me.user.id
+    // NOT auth.getUser(). A Silo JWT is minted by authenticate-hub-user with
+    // the HUB user id as `sub`, and that person has no row in this project's
+    // auth.users — so getUser() fails for every properly signed-in user. The
+    // roster is the gate instead, exactly as the RPCs in this schema do it.
+    const { data: employeeId, error: whoErr } = await userClient.rpc('current_employee_id')
+    if (whoErr || !employeeId) return json({ error: 'Not authenticated' }, 401)
+
+    // Only used to keep somebody from notifying themselves. The token was
+    // already verified by the platform and again by PostgREST above, and a
+    // wrong value here could at worst re-notify the sender — it grants
+    // nothing — so reading the claim directly is enough.
+    const callerUserId = (() => {
+      try {
+        const payload = authHeader.replace(/^Bearer\s+/i, '').split('.')[1]
+        return String(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).sub || '')
+      } catch { return '' }
+    })()
 
     const payload = await req.json()
     const kind = String(payload.kind || '')

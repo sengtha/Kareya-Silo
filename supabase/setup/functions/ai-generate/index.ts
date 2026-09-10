@@ -30,9 +30,21 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     })
 
-    // Reject anonymous callers (legacy function had no auth at all).
-    const { data: userData, error: userErr } = await userClient.auth.getUser()
-    if (userErr || !userData?.user) return json({ error: 'Not authenticated' }, 401)
+    // Reject anonymous callers (the legacy function had no auth at all).
+    //
+    // NOT auth.getUser(). A Silo JWT is minted by authenticate-hub-user and
+    // signed with SILO_JWT_SECRET; its `sub` is the HUB user id, and that
+    // person has no row in this project's auth.users at all. So getUser()
+    // asks GoTrue to look up a user that by design does not exist here and
+    // fails for everybody, in every Silo, however properly they signed in.
+    //
+    // The roster is the gate instead, which is what every RPC in this schema
+    // already does: current_employee_id() resolves auth.uid() against the
+    // local employees table. Anonymous callers get NULL, and so does a valid
+    // JWT for somebody who is not on this business's roster — which is a
+    // stricter check than the one it replaces, not a weaker one.
+    const { data: employeeId, error: whoErr } = await userClient.rpc('current_employee_id')
+    if (whoErr || !employeeId) return json({ error: 'Not authenticated' }, 401)
 
     const { action, prompt, context, type, imageBase64, year, mimeType, title, dept, eventsJson } = await req.json()
 
