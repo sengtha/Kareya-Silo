@@ -29,7 +29,7 @@ export async function runClaude(a: RunArgs): Promise<RunResult> {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: a.model || 'claude-opus-4-8',
+        model: a.model || 'claude-opus-5',
         max_tokens: 2048,
         system: a.system,
         messages,

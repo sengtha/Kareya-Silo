@@ -17,22 +17,44 @@ export interface GenArgs {
 }
 
 // ─────────────────────────────── Claude ───────────────────────────────
+// Sampling parameters were REMOVED from the current Claude models. Opus 4.7
+// and everything after it — Opus 4.8, Opus 5, Sonnet 5, the Fable family —
+// answer any request carrying `temperature` with
+//
+//     400 invalid_request_error: temperature is deprecated for this model.
+//
+// so every one-shot helper failed outright. Depth and spend are controlled by
+// `output_config.effort` on those models instead; there is no temperature
+// equivalent, so the configured value is simply not sent.
+//
+// The list below names the models that STILL ACCEPT temperature rather than
+// the ones that reject it. A rejection list would need editing every time
+// Anthropic ships a model, and would fail the wrong way for anything it had
+// not heard of yet — sending the parameter and breaking generation. This way
+// an unknown model is assumed to be current, which is the safe default.
+const CLAUDE_TAKES_TEMPERATURE = [
+  'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5',
+  'claude-opus-4-5', 'claude-sonnet-4-5', 'claude-3',
+]
+
 async function genClaude(a: GenArgs): Promise<string> {
   const content = a.parts.map((p) =>
     p.image
       ? { type: 'image', source: { type: 'base64', media_type: p.image.mime, data: p.image.data } }
       : { type: 'text', text: p.text || '' },
   )
+  const model = a.model || 'claude-opus-5'
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: 4096,
+    system: a.system,
+    messages: [{ role: 'user', content }],
+  }
+  if (CLAUDE_TAKES_TEMPERATURE.some((m) => model.startsWith(m))) body.temperature = a.temperature
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({
-      model: a.model || 'claude-opus-4-8',
-      max_tokens: 4096,
-      temperature: a.temperature,
-      system: a.system,
-      messages: [{ role: 'user', content }],
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Claude error ${res.status}: ${await res.text()}`)
   const data = await res.json()
