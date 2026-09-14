@@ -64,6 +64,18 @@ Gemini. Every AI query runs under the caller's JWT, so RLS binds.
 
 ## Setup
 
+> **Prefer to self-host the whole stack?** You can skip the hosted-Supabase
+> steps below entirely: one command (or one GitHub Actions run) stands up the
+> full Silo — Postgres, Auth, Storage, edge functions, Studio and automatic
+> HTTPS — on your own VM. See
+> [`docs/Deploy-from-GitHub.md`](docs/Deploy-from-GitHub.md) and
+> [`docker/README.md`](docker/README.md).
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/sengtha/Kareya-Silo/main/install.sh \
+>   | sudo bash -s -- --domain silo.example.com --email you@example.com
+> ```
+
 ### 1. Create a Supabase project
 This is your business's private database. Note its **Project URL** and
 **anon (publishable) key** — you will register these on the Hub in the Silo
